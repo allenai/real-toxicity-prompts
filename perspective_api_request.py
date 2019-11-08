@@ -65,7 +65,8 @@ def chunk_text(text: str, chunk_len: int) -> List[str]:
 
 
 def request_files(pending_files):
-    for text_file in tqdm(pending_files):
+    pbar = tqdm(pending_files)
+    for text_file in pbar:
         full_text = text_file.read_text()
         chunks = chunk_text(full_text, PERSPECTIVE_API_LEN_LIMIT)
 
@@ -79,9 +80,11 @@ def request_files(pending_files):
                 response = perspective_request(text)
                 with response_file.open('w') as f:
                     json.dump(response, f)
+                pbar.set_description(f'Success: {response_file.name}')
             except:
                 with PERSPECTIVE_API_FAILURES_FILE.open('a') as f:
                     print(text_file.name, file=f)
+                pbar.set_description(f'Failure: {response_file.name}')
 
             # Sleep for 1 second due to rate limiting by API
             time.sleep(PERSPECTIVE_API_SLEEP_SECONDS)
