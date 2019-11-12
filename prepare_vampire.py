@@ -5,27 +5,17 @@ import pandas as pd
 
 from constants import DATA_DIR, URLS_PICKLE, BIAS_PICKLE, TEXTS_DIR, VAMPIRE_DIR
 
-NUM_THREADS = 8
-
-allsides = pd.read_pickle()
+allsides = pd.read_pickle(BIAS_PICKLE)
 urls = pd.read_pickle(URLS_PICKLE)
-urls_merged = urls.merge(BIAS_PICKLE)
+urls_merged = urls.merge(allsides)
 
-
-def vampire_file(file):
-    out_dict = {'text': file.read_text()}
-    filename = file.name
+for i, row in tqdm(urls_merged.iterrows(), total=len(urls_merged)):
+    text_file = TEXTS_DIR / row.filename
+    out_dict = {
+        'text': text_file.read_text(),
+        'label': row.bias
+    }
     
-    if filename in urls_merged.index:
-        out_dict['label'] = urls_merged.loc[filename, 'bias']
-    
-    out_file = VAMPIRE_DIR / file.with_suffix('.json').name
+    out_file = VAMPIRE_DIR / text_file.with_suffix('.vampire.json').name
     with out_file.open('w') as f:
         json.dump(out_dict, f)
-
-
-with tqdm(total=len(urls_merged)) as t:
-    pool = ThreadPool(NUM_THREADS)
-    for _ in pool.imap_unordered(vampire_file, TEXTS_DIR.iterdir()):
-        t.update(1)
-        
