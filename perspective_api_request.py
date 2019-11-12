@@ -4,32 +4,16 @@ import time
 from tqdm import tqdm
 from typing import List
 
-from constants import TEXTS_DIR, PERSPECTIVE_API_RESPONSE_DIR, PERSPECTIVE_API_FAILURES_FILE, PERSPECTIVE_API_KEY
+from constants import TEXTS_DIR, PERSPECTIVE_API_RESPONSE_DIR, PERSPECTIVE_API_FAILURES_FILE, PERSPECTIVE_API_KEY, PERSPECTIVE_API_LEN_LIMIT, PERSPECTIVE_API_SLEEP_SECONDS, PERSPECTIVE_API_ATTRIBUTES
 
 # Generates API client object dynamically based on service name and version.
 SERVICE = discovery.build('commentanalyzer', 'v1alpha1', developerKey=PERSPECTIVE_API_KEY)
-
-# All attributes can be found here:
-# https://github.com/conversationai/perspectiveapi/blob/master/api_reference.md#toxicity-models
-ATTRIBUTES = [
-    'TOXICITY',
-    'SEVERE_TOXICITY',
-    'IDENTITY_ATTACK',
-    'INSULT',
-    'THREAT',
-    'PROFANITY',
-    'SEXUALLY_EXPLICIT',
-    'FLIRTATION'
-]
-
-PERSPECTIVE_API_SLEEP_SECONDS = 1
-PERSPECTIVE_API_LEN_LIMIT = 20000
 
 
 def perspective_request(text):
     analyze_request = {
         'comment': {'text': text},
-        'requestedAttributes': {attr: {} for attr in ATTRIBUTES}
+        'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES}
     }
     return SERVICE.comments().analyze(body=analyze_request).execute()
 
