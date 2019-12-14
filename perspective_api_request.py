@@ -4,10 +4,16 @@ import time
 from tqdm import tqdm
 from typing import List
 
-from constants import TEXTS_DIR, PERSPECTIVE_API_RESPONSE_DIR, PERSPECTIVE_API_FAILURES_FILE, PERSPECTIVE_API_KEY, PERSPECTIVE_API_LEN_LIMIT, PERSPECTIVE_API_SLEEP_SECONDS, PERSPECTIVE_API_ATTRIBUTES
+from constants import TEXTS_DIR, PERSPECTIVE_API_RESPONSE_DIR, PERSPECTIVE_API_FAILURES_FILE, \
+    PERSPECTIVE_API_LENGTH_LIMIT_FAILURE_FILE, PERSPECTIVE_API_KEY, PERSPECTIVE_API_LEN_LIMIT, \
+    PERSPECTIVE_API_SLEEP_SECONDS, PERSPECTIVE_API_ATTRIBUTES
 
 # Generates API client object dynamically based on service name and version.
 SERVICE = discovery.build('commentanalyzer', 'v1alpha1', developerKey=PERSPECTIVE_API_KEY)
+BATCH_SIZE = 25
+REQUESTS = {}
+NUM_FAILURES = 0
+NUM_FAILURES_TOO_LONG = 0
 
 
 def perspective_request(text):
@@ -15,7 +21,7 @@ def perspective_request(text):
         'comment': {'text': text},
         'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES}
     }
-    return SERVICE.comments().analyze(body=analyze_request).execute()
+    return SERVICE.comments().analyze(body=analyze_request)
 
 
 def response_file_for(text_file, chunk_num=None):
@@ -38,7 +44,7 @@ def find_pending_files():
     # Remove all failed downloads from pending files
     pending_files -= failure_text_files
 
-    return pending_files
+    return list(pending_files)
 
 
 def chunk_text(text: str, chunk_len: int) -> List[str]:
@@ -48,35 +54,54 @@ def chunk_text(text: str, chunk_len: int) -> List[str]:
     return chunks
 
 
+def response_callback(request_id, response, exception):
+    global NUM_FAILURES
+
+    text_filename = request_id
+    response_file = PERSPECTIVE_API_RESPONSE_DIR / text_filename + ".json"
+    if exception:
+        with PERSPECTIVE_API_FAILURES_FILE.open('a') as f:
+            print(text_filename, file=f)
+        NUM_FAILURES += 1
+    else:
+        with response_file.open('w') as f:
+            json.dump(response, f)
+
+
 def request_files(pending_files):
-    pbar = tqdm(pending_files)
-    for text_file in pbar:
-        full_text = text_file.read_text()
-        chunks = chunk_text(full_text, PERSPECTIVE_API_LEN_LIMIT)
+    # TODO: add chunking
+    global NUM_FAILURES_TOO_LONG
 
-        for i, text in enumerate(chunks):
-            if len(chunks) > 1:
-                response_file = response_file_for(text_file, chunk_num=i)
-            else:
-                response_file = response_file_for(text_file)
+    pbar = tqdm(total=len(pending_files))
+    i = 0
+    while i < len(pending_files):
+        # Get items for batch
+        batch_files = pending_files[i: i + BATCH_SIZE]
 
-            try:
-                response = perspective_request(text)
-                with response_file.open('w') as f:
-                    json.dump(response, f)
-                pbar.set_description(f'Success: {response_file.name}')
-            except:
-                with PERSPECTIVE_API_FAILURES_FILE.open('a') as f:
-                    print(text_file.name, file=f)
-                pbar.set_description(f'Failure: {response_file.name}')
+        # Request batch
+        batch_request = SERVICE.new_batch_http_request()
+        for file in batch_files:
+            text = file.read_text()
+            if len(text) > PERSPECTIVE_API_LEN_LIMIT:
+                with PERSPECTIVE_API_LENGTH_LIMIT_FAILURE_FILE.open('a') as f:
+                    print(file.name, file=f)
+                NUM_FAILURES_TOO_LONG += 1
+                continue
+            request_id = file.name
+            batch_request.add(perspective_request(file), callback=response_callback, request_id=request_id)
 
-            # Sleep for 1 second due to rate limiting by API
-            time.sleep(PERSPECTIVE_API_SLEEP_SECONDS)
+        batch_request.execute()
+
+        # Update progress bar and sleep
+        pbar.update(BATCH_SIZE)
+        pbar.set_description(f"too long: {NUM_FAILURES_TOO_LONG}, failures: {NUM_FAILURES}")
+        time.sleep(PERSPECTIVE_API_SLEEP_SECONDS)
 
 
 def main():
+    tqdm.write("Finding pending files...\n")
     pending_files = find_pending_files()
-    # pending_files = [TEXTS_DIR / '0466904-a2ca59bee16fc898dea2e3fae2a0b5ed.txt']
+    tqdm.write("Requesting from Perspective API...\n")
     request_files(pending_files)
 
 
