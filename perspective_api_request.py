@@ -16,7 +16,7 @@ NUM_FAILURES = 0
 NUM_FAILURES_TOO_LONG = 0
 
 
-def perspective_request(text):
+def perspective_request(text: str):
     analyze_request = {
         'comment': {'text': text},
         'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES}
@@ -88,7 +88,7 @@ def request_files(pending_files):
                 NUM_FAILURES_TOO_LONG += 1
                 continue
             request_id = file.name
-            batch_request.add(perspective_request(file), callback=response_callback, request_id=request_id)
+            batch_request.add(perspective_request(text), callback=response_callback, request_id=request_id)
 
         batch_request.execute()
 
