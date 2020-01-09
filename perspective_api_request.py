@@ -41,8 +41,12 @@ def find_pending_files():
     failure_text_filenames = PERSPECTIVE_API_FAILURES_FILE.read_text().split()
     failure_text_files = set(TEXTS_DIR / filename for filename in failure_text_filenames)
 
+    too_long_filenames = PERSPECTIVE_API_LENGTH_LIMIT_FAILURE_FILE.read_text().split()
+    too_long_files = set(TEXTS_DIR / filename for filename in too_long_filenames)
+
     # Remove all failed downloads from pending files
     pending_files -= failure_text_files
+    pending_files -= too_long_files
 
     return list(pending_files)
 
@@ -58,7 +62,7 @@ def response_callback(request_id, response, exception):
     global NUM_FAILURES
 
     text_filename = request_id
-    response_file = PERSPECTIVE_API_RESPONSE_DIR / text_filename + ".json"
+    response_file = PERSPECTIVE_API_RESPONSE_DIR / (text_filename + ".json")
     if exception:
         with PERSPECTIVE_API_FAILURES_FILE.open('a') as f:
             print(text_filename, file=f)
@@ -90,19 +94,23 @@ def request_files(pending_files):
             request_id = file.name
             batch_request.add(perspective_request(text), callback=response_callback, request_id=request_id)
 
+        before = time.time()
         batch_request.execute()
+        after = time.time()
 
-        # Update progress bar and sleep
+        # Update progress bar
+        i += BATCH_SIZE
         pbar.update(BATCH_SIZE)
         pbar.set_description(f"too long: {NUM_FAILURES_TOO_LONG}, failures: {NUM_FAILURES}")
-        time.sleep(PERSPECTIVE_API_SLEEP_SECONDS)
+
+        # Sleep off remainder time
+        request_time = after - before
+        if request_time < PERSPECTIVE_API_SLEEP_SECONDS:
+            time.sleep(PERSPECTIVE_API_SLEEP_SECONDS - request_time)
 
 
-def main():
+if __name__ == '__main__':
     tqdm.write("Finding pending files...\n")
     pending_files = find_pending_files()
     tqdm.write("Requesting from Perspective API...\n")
     request_files(pending_files)
-
-
-main()
