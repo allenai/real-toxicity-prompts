@@ -68,8 +68,11 @@ def response_callback(request_id, response, exception):
             print(text_filename, file=f)
         NUM_FAILURES += 1
     else:
-        with response_file.open('w') as f:
-            json.dump(response, f)
+        try:
+            with response_file.open('w') as f:
+                json.dump(response, f)
+        except OSError as e:
+            print(e)
 
 
 def request_files(pending_files):
