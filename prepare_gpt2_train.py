@@ -22,12 +22,12 @@ if __name__ == '__main__':
 
     # Load dataframe from sql
     df = pd.read_sql(
-        'select * from responses where toxicity < 0.05',
+        'select * from responses where toxicity < 0.01',
         con=engine
     )
 
     print("Number of selected examples:", len(df))
 
-    train_file = OUTPUT_DIR / 'finetune.train.txt'
-    val_file = OUTPUT_DIR / 'finetune.val.txt'
+    train_file = OUTPUT_DIR / 'finetune-clean-0.01.train.txt'
+    val_file = OUTPUT_DIR / 'finetune-clean-0.01.val.txt'
     save_finetune_data(df, train_file, val_file)
