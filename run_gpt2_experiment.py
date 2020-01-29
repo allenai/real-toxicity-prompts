@@ -24,7 +24,7 @@ def save_data(experiment_dir: Path, dataset: pd.DataFrame, name: str, eos_token=
     return text_file
 
 
-def train_model(output_dir: Path, train_file: Path, val_file: Path, batch_size=1, gradient_accumulation_steps=4):
+def train_model(output_dir: Path, train_file: Path, val_file: Path, epochs=1, batch_size=1, gradient_accumulation_steps=4):
     sys.argv = [
         "run_lm_finetuning.py",
         f'--output_dir={output_dir}',
@@ -34,6 +34,7 @@ def train_model(output_dir: Path, train_file: Path, val_file: Path, batch_size=1
         f'--train_data_file={train_file}',
         '--do_eval',
         f'--eval_data_file={val_file}',
+        f'--num_train_epochs={epochs}',
         # Some hacks to get it to work on my poor 1080Ti
         f'--per_gpu_train_batch_size={batch_size}',
         f'--per_gpu_eval_batch_size={batch_size}',
