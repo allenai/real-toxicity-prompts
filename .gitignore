@@ -6,6 +6,9 @@ output/
 experiments/
 runs/
 
+# Deployment files
+.idea/deployment.xml
+.idea/webServers.xml
 
 ############################################################
 # Python

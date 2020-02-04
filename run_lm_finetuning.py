@@ -319,6 +319,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             logger.info("  Starting fine-tuning.")
 
     tr_loss, logging_loss = 0.0, 0.0
+    best_eval_loss = None
+    num_evals_without_progress = 0
 
     model_to_resize = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
     model_to_resize.resize_token_embeddings(len(tokenizer))
@@ -374,6 +376,21 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                         results = evaluate(args, model, tokenizer)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
+
+                        if args.patience > 0:
+                            eval_loss = results["loss"]
+                            if not best_eval_loss or eval_loss < best_eval_loss:
+                                best_eval_loss = eval_loss
+                            else:
+                                num_evals_without_progress += 1
+                                if num_evals_without_progress >= args.patience:
+                                    # TODO: refactor this to break out of method
+                                    logger.info(f"Patience: threshold ({args.patience}) exceeded, stopping training early.")
+                                    tb_writer.close()
+                                    return global_step, tr_loss / global_step
+                                else:
+                                    logger.info(f"Patience: {num_evals_without_progress} / {args.patience} evaluations with non-decreasing loss.")
+
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                     logging_loss = tr_loss
@@ -457,9 +474,12 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         nb_eval_steps += 1
 
     eval_loss = eval_loss / nb_eval_steps
-    perplexity = torch.exp(torch.tensor(eval_loss))
 
-    result = {"perplexity": perplexity}
+    eval_loss_result = torch.tensor(eval_loss)
+    result = {
+        "perplexity": torch.exp(eval_loss_result),
+        "loss": eval_loss_result
+    }
 
     output_eval_file = os.path.join(eval_output_dir, prefix, "eval_results.txt")
     with open(output_eval_file, "w") as writer:
@@ -574,6 +594,14 @@ def main():
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
+    # TODO: add assert for evaluate_during_training
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=-1,
+        help="If n > 0: Stop training after evaluating n times with non-decreasing loss."
+             "Must be used with evaluate_during_training."
+    )
     parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
     parser.add_argument(
