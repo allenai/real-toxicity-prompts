@@ -1,12 +1,13 @@
-from pathlib import Path
-from tqdm import trange
-from itertools import islice, count
 import json
-from constants import PERSPECTIVE_API_RESPONSE_DIR, DATA_DIR
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from itertools import islice
+from pathlib import Path
+
+import click
 from sqlalchemy import Column, Float, String
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from tqdm import trange
 
 BATCH_SIZE = 100000
 LIMIT = None
@@ -41,10 +42,10 @@ def create_response(response_file: Path) -> Response:
 
     return Response(id=id, **attributes)
 
-
-def main():
-    database_path = DATA_DIR / 'perspective_api_responses.db'
-
+@click.command()
+@click.argument('database_path')
+@click.argument('responses_dir')
+def main(database_path: str, responses_dir: str):
     engine = create_engine(f'sqlite:///{database_path}', echo=False)
 
     # Create schema for Response
@@ -54,19 +55,20 @@ def main():
     Session.configure(bind=engine)
     session = Session()
 
-    num_files = sum(1 for _ in PERSPECTIVE_API_RESPONSE_DIR.iterdir())
-    response_dir_iter = PERSPECTIVE_API_RESPONSE_DIR.iterdir()
+    responses_dir = Path(responses_dir)
+    num_responses = sum(1 for _ in responses_dir.iterdir())
+    responses_dir_iter = responses_dir.iterdir()
 
     try:
         # Create a sample response
-        for i in trange(0, num_files, BATCH_SIZE):
+        for i in trange(0, num_responses, BATCH_SIZE):
             # Break if we will exceed our limit
             if LIMIT and i + BATCH_SIZE >= LIMIT:
                 break
 
             # Get batch of responses
             responses = []
-            for file in islice(response_dir_iter, BATCH_SIZE):
+            for file in islice(responses_dir_iter, BATCH_SIZE):
                 # Skip chunked files
                 if "chunk" in file.name:
                     continue
