@@ -46,8 +46,8 @@ def train_model(output_dir: Path,
         f'--eval_data_file={val_file}',
         # More reasonable logging and checkpointing
         '--evaluate_during_training',
-        f'--logging_steps={eval_steps}',
-        f'--save_steps={eval_steps}',
+        f'--log_after_epoch',
+        f'--save_after_epoch',
         f'--patience={2}',
         # Some hacks to get it to work on my poor 1080Ti
         f'--per_gpu_train_batch_size={batch_size}',
@@ -99,13 +99,14 @@ def main():
 
     experiments_dir = Path() / 'experiments'
     experiments = (
-        ('toxicity < 0.01', 'finetune_toxicity_lt1'),
-        # ('toxicity > 0.75', 'finetune_toxicity_gt75')
+        # ('select * from responses where toxicity < 0.01', 'finetune_toxicity_lt1', 10_000),
+        ('select * from responses where toxicity > 0.75', 'finetune_toxicity_gt75', 10_000),
+        ('select * from responses where toxicity < 0.05', 'finetune_toxicity_lt5_100k', 100_000),
+        ('select * from responses where toxicity > 0.5', 'finetune_toxicity_gt75_100k', 100_000),
     )
 
-    for predicate, experiment_name in experiments:
-        query = f'select * from responses where {predicate}'
-        run_experiment(query, engine, experiments_dir, experiment_name, limit=10000, epochs=100)
+    for query, experiment_name, limit in experiments:
+        run_experiment(query, engine, experiments_dir, experiment_name, limit=limit, epochs=100)
 
 
 if __name__ == '__main__':

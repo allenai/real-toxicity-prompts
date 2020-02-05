@@ -321,6 +321,11 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     tr_loss, logging_loss = 0.0, 0.0
     best_eval_loss = None
     num_evals_without_progress = 0
+    if args.log_after_epoch:
+        args.logging_steps = len(train_dataloader) // args.gradient_accumulation_steps
+        logger.info(f"Updated logging steps: {args.logging_steps}")
+    if args.save_after_epoch:
+        args.save_steps = len(train_dataloader) // args.gradient_accumulation_steps
 
     model_to_resize = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
     model_to_resize.resize_token_embeddings(len(tokenizer))
@@ -603,7 +608,9 @@ def main():
              "Must be used with evaluate_during_training."
     )
     parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
+    parser.add_argument("--log_after_epoch", action="store_true", help="Log after each epoch. Override logging_steps.")
     parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
+    parser.add_argument("--save_after_epoch", action="store_true", help="Save after each epoch. Override save_steps.")
     parser.add_argument(
         "--save_total_limit",
         type=int,
