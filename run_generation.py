@@ -17,10 +17,10 @@
 """ Conditional text generation with the auto-regressive models of the library (GPT/GPT-2/CTRL/Transformer-XL/XLNet)
 """
 
-
 import argparse
 import logging
 
+from pathlib import Path
 import numpy as np
 import torch
 
@@ -38,7 +38,6 @@ from transformers import (
     XLNetLMHeadModel,
     XLNetTokenizer,
 )
-
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s", datefmt="%m/%d/%Y %H:%M:%S", level=logging.INFO,
@@ -162,8 +161,11 @@ def main():
         help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(MODEL_CLASSES.keys()),
     )
 
+    parser.add_argument("--no_prompt", action="store_true")
+    parser.add_argument("--num_return_sequences", type=int, default=None)
+
     parser.add_argument("--prompt", type=str, default="")
-    parser.add_argument("--length", type=int, default=20)
+    parser.add_argument("--length", type=int, default=200)
     parser.add_argument("--stop_token", type=str, default=None, help="Token at which text generation is stopped")
 
     parser.add_argument(
@@ -204,33 +206,47 @@ def main():
     args.length = adjust_length_to_model(args.length, max_sequence_length=model.config.max_position_embeddings)
     logger.info(args)
 
-    prompt_text = args.prompt if args.prompt else input("Model prompt >>> ")
+    if args.no_prompt:
+        encoded_prompt = None
+    else:
+        prompt_text = args.prompt if args.prompt else input("Model prompt >>> ")
 
-    # Different models need different input formatting and/or extra arguments
-    requires_preprocessing = args.model_type in PREPROCESSING_FUNCTIONS.keys()
-    if requires_preprocessing:
-        prepare_input = PREPROCESSING_FUNCTIONS.get(args.model_type)
-        prompt_text = prepare_input(args, model, tokenizer, prompt_text)
-    encoded_prompt = tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
-    encoded_prompt = encoded_prompt.to(args.device)
+        # Different models need different input formatting and/or extra arguments
+        requires_preprocessing = args.model_type in PREPROCESSING_FUNCTIONS.keys()
+        if requires_preprocessing:
+            prepare_input = PREPROCESSING_FUNCTIONS.get(args.model_type)
+            prompt_text = prepare_input(args, model, tokenizer, prompt_text)
+        encoded_prompt = tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
+        encoded_prompt = encoded_prompt.to(args.device)
 
-    output_sequences = model.generate(
-        input_ids=encoded_prompt,
-        max_length=args.length,
-        temperature=args.temperature,
-        top_k=args.k,
-        top_p=args.p,
-        repetition_penalty=args.repetition_penalty,
-    )
+    gen_out = Path('output') / 'gen_lt1'
+    gen_out.mkdir(parents=True)
+    texts = []
+    for batch in range(32):
+        output_sequences = model.generate(
+            # input_ids=encoded_prompt,
+            max_length=200,
+            temperature=1.0,
+            # top_k=args.k,
+            top_p=0.9,
+            repetition_penalty=args.repetition_penalty,
+            num_return_sequences=32,
+            do_sample=True,
+            # num_beams=4
+        )
 
-    # Batch size == 1. to add more examples please use num_return_sequences > 1
-    generated_sequence = output_sequences[0].tolist()
-    text = tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
-    text = text[: text.find(args.stop_token) if args.stop_token else None]
+        # Batch size == 1. to add more examples please use num_return_sequences > 1
+        generated_sequences = output_sequences[0].tolist()
+        for i, generated_sequence in enumerate(generated_sequences):
+            text = tokenizer.decode(generated_sequence[1:-1], clean_up_tokenization_spaces=True)
+            text = text[: text.find(args.stop_token) if args.stop_token else None]
+            texts.append(text)
 
-    print(text)
+            out_f = gen_out / f"{batch}-{i}.txt"
+            out_f.write_text(text)
+            print(text)
 
-    return text
+    return texts
 
 
 if __name__ == "__main__":
