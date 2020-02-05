@@ -1,119 +1,138 @@
-from googleapiclient import discovery
+import csv
 import json
 import time
+from math import ceil
+from pathlib import Path
+from typing import List, Union, Optional
+
+import click
+from googleapiclient import discovery
 from tqdm import tqdm
-from typing import List
 
-from constants import TEXTS_DIR, PERSPECTIVE_API_RESPONSE_DIR, PERSPECTIVE_API_FAILURES_FILE, \
-    PERSPECTIVE_API_LENGTH_LIMIT_FAILURE_FILE, PERSPECTIVE_API_KEY, PERSPECTIVE_API_LEN_LIMIT, \
-    PERSPECTIVE_API_SLEEP_SECONDS, PERSPECTIVE_API_ATTRIBUTES
-
-# Generates API client object dynamically based on service name and version.
-SERVICE = discovery.build('commentanalyzer', 'v1alpha1', developerKey=PERSPECTIVE_API_KEY)
-BATCH_SIZE = 25
-REQUESTS = {}
-NUM_FAILURES = 0
-NUM_FAILURES_TOO_LONG = 0
+from constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_KEY, PERSPECTIVE_API_LEN_LIMIT
 
 
-def perspective_request(text: str):
+def perspective_request(text: str, service):
     analyze_request = {
         'comment': {'text': text},
         'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES}
     }
-    return SERVICE.comments().analyze(body=analyze_request)
+    return service.comments().analyze(body=analyze_request)
 
 
-def response_file_for(text_file, chunk_num=None):
-    if chunk_num is None:
-        response_filename = text_file.name + '.json'
-    else:
-        response_filename = f'{text_file.name}.chunk-{chunk_num}.json'
-    return PERSPECTIVE_API_RESPONSE_DIR / response_filename
+def response_path(response_dir: Path, id_: str) -> Path:
+    return response_dir / (id_ + ".json")
 
 
-def find_pending_files():
-    pending_files = set()
-    for text_file in TEXTS_DIR.iterdir():
-        if not response_file_for(text_file).exists():
-            pending_files.add(text_file)
+def log_failure(failures_file: Optional[Path], id_: str, message: str = None):
+    if not failures_file:
+        return
 
-    failure_text_filenames = PERSPECTIVE_API_FAILURES_FILE.read_text().split()
-    failure_text_files = set(TEXTS_DIR / filename for filename in failure_text_filenames)
-
-    too_long_filenames = PERSPECTIVE_API_LENGTH_LIMIT_FAILURE_FILE.read_text().split()
-    too_long_files = set(TEXTS_DIR / filename for filename in too_long_filenames)
-
-    # Remove all failed downloads from pending files
-    pending_files -= failure_text_files
-    pending_files -= too_long_files
-
-    return list(pending_files)
+    row = [id_, message or '']
+    with failures_file.open('a') as f:
+        writer = csv.writer(f)
+        writer.writerow(row)
 
 
-def chunk_text(text: str, chunk_len: int) -> List[str]:
-    chunks = []
-    for i in range(0, len(text), chunk_len):
-        chunks.append(text[i:i + chunk_len])
-    return chunks
+def load_batches(docs: Union[List[Path], List[str]], batch_size: int):
+    assert batch_size > 0
+
+    batch = []
+    for i, doc in enumerate(docs):
+        # Yield next batch
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+
+        # Add to current batch
+        if isinstance(doc, Path):
+            request_id = doc.name
+            text = doc.read_text()
+        else:
+            request_id = str(i)
+            text = doc
+
+        batch.append((request_id, text))
+
+    # Yield last un-filled batch
+    if len(batch) != 0:
+        yield batch
 
 
-def response_callback(request_id, response, exception):
-    global NUM_FAILURES
+def request(corpus: Union[List[Path], List[str]], responses_dir: Path, failures_file: Optional[Path], service,
+            batch_size: int):
+    num_failures = 0
 
-    text_filename = request_id
-    response_file = PERSPECTIVE_API_RESPONSE_DIR / (text_filename + ".json")
-    if exception:
-        with PERSPECTIVE_API_FAILURES_FILE.open('a') as f:
-            print(text_filename, file=f)
-        NUM_FAILURES += 1
-    else:
-        try:
-            with response_file.open('w') as f:
-                json.dump(response, f)
-        except OSError as e:
-            print(e)
+    def response_callback(text_filename, response, exception):
+        nonlocal num_failures
 
+        if exception:
+            log_failure(failures_file, text_filename, exception)
+            num_failures += 1
+        else:
+            try:
+                with response_path(responses_dir, text_filename).open('w') as f:
+                    json.dump(response, f)
+            except OSError as e:
+                tqdm.write(f'Error while saving response for {text_filename}: {e}')
 
-def request_files(pending_files):
-    # TODO: add chunking
-    global NUM_FAILURES_TOO_LONG
+    pbar = tqdm(total=len(corpus))
+    for batch in load_batches(corpus, batch_size):
+        start_time = time.time()
 
-    pbar = tqdm(total=len(pending_files))
-    i = 0
-    while i < len(pending_files):
-        # Get items for batch
-        batch_files = pending_files[i: i + BATCH_SIZE]
-
-        # Request batch
-        batch_request = SERVICE.new_batch_http_request()
-        for file in batch_files:
-            text = file.read_text()
+        # Create batch request
+        batch_request = service.new_batch_http_request()
+        for request_id, text in batch:
             if len(text) > PERSPECTIVE_API_LEN_LIMIT:
-                with PERSPECTIVE_API_LENGTH_LIMIT_FAILURE_FILE.open('a') as f:
-                    print(file.name, file=f)
-                NUM_FAILURES_TOO_LONG += 1
+                log_failure(failures_file, request_id,
+                            f'Document length was {len(text)}, limit is {PERSPECTIVE_API_LEN_LIMIT}')
+                num_failures += 1
                 continue
-            request_id = file.name
-            batch_request.add(perspective_request(text), callback=response_callback, request_id=request_id)
 
-        before = time.time()
+            batch_request.add(perspective_request(text, service), callback=response_callback, request_id=request_id)
+
+        # Make request
         batch_request.execute()
-        after = time.time()
 
         # Update progress bar
-        i += BATCH_SIZE
-        pbar.update(BATCH_SIZE)
-        pbar.set_description(f"too long: {NUM_FAILURES_TOO_LONG}, failures: {NUM_FAILURES}")
+        pbar.set_description(f"Failures: {num_failures}")
+        pbar.update(batch_size)
 
-        # Sleep off remainder time
-        request_time = after - before
-        if request_time < PERSPECTIVE_API_SLEEP_SECONDS:
-            time.sleep(PERSPECTIVE_API_SLEEP_SECONDS - request_time)
+        # Rate limit to 1 batch request per second
+        request_time = time.time() - start_time
+        if request_time < 1:
+            time.sleep(1 - request_time)
+
+
+@click.command()
+@click.argument('corpus')
+@click.argument('responses_dir')
+@click.option('--failures_file', default=None, help='CSV file to log API failures to.')
+@click.option('--requests_per_second', default=25, help='Requests per second to the Perspective API.')
+@click.option('--api_key', default=PERSPECTIVE_API_KEY, help='Google API key with Perspective API access.')
+def main(corpus, responses_dir, failures_file, api_key, requests_per_second):
+    # Load corpus
+    corpus = Path(corpus)
+    if not corpus.exists():
+        raise click.FileError("Corpus path does not exist")
+    elif corpus.is_file():
+        # Read corpus into memory if it's a single file
+        corpus = corpus.open().readlines()
+    elif corpus.is_dir():
+        # Create list of files of it's a directory
+        corpus = list(corpus.iterdir())
+
+    responses_dir = Path(responses_dir)
+    if not responses_dir.exists():
+        responses_dir.mkdir(parents=True, exist_ok=False)
+
+    # Generate API client object dynamically based on service name and version
+    service = discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
+
+    # Make requests
+    tqdm.write("Requesting from Perspective API...")
+    request(corpus, responses_dir, failures_file, service, requests_per_second)
 
 
 if __name__ == '__main__':
-    tqdm.write("Finding pending files...\n")
-    pending_files = find_pending_files()
-    tqdm.write("Requesting from Perspective API...\n")
-    request_files(pending_files)
+    main()
