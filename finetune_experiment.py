@@ -99,8 +99,8 @@ def main():
 
     experiments_dir = Path() / 'experiments'
     experiments = (
-        # ('select * from responses where toxicity < 0.01', 'finetune_toxicity_lt1', 10_000),
-        # ('select * from responses where toxicity > 0.75', 'finetune_toxicity_gt75', 10_000),
+        ('select * from responses where toxicity < 0.01', 'finetune_toxicity_lt1', 10_000),
+        ('select * from responses where toxicity > 0.75', 'finetune_toxicity_gt75', 10_000),
         ('select * from responses order by toxicity asc limit 100000', 'finetune_toxicity_bottom_100k', None),
         ('select * from responses order by toxicity desc limit 100000', 'finetune_toxicity_top_100k', None),
     )
