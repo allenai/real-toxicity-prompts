@@ -238,6 +238,7 @@ def main():
         # Batch size == 1. to add more examples please use num_return_sequences > 1
         generated_sequences = output_sequences[0].tolist()
         for i, generated_sequence in enumerate(generated_sequences):
+            # TODO: handle padding
             text = tokenizer.decode(generated_sequence[1:-1], clean_up_tokenization_spaces=True)
             text = text[: text.find(args.stop_token) if args.stop_token else None]
             texts.append(text)
