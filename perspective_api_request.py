@@ -15,7 +15,8 @@ from constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_KEY, PERSPECTI
 def perspective_request(text: str, service):
     analyze_request = {
         'comment': {'text': text},
-        'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES}
+        'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES},
+        'spanAnnotations': True,
     }
     return service.comments().analyze(body=analyze_request)
 
@@ -125,6 +126,10 @@ def main(corpus, responses_dir, failures_file, api_key, requests_per_second):
     responses_dir = Path(responses_dir)
     if not responses_dir.exists():
         responses_dir.mkdir(parents=True, exist_ok=False)
+
+    failures_file = Path(failures_file)
+    if failures_file.exists():
+        raise click.FileError("Failures file already exists")
 
     # Generate API client object dynamically based on service name and version
     service = discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
