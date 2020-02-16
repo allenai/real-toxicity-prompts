@@ -71,6 +71,7 @@ def run_experiment(query: str, engine: Engine, experiments_dir: Path, experiment
     print("Saving training data...")
     experiment_dir = experiments_dir / experiment_name
     makedirs(experiment_dir)
+    (experiment_dir / 'query.txt').write_text(query + '\n')
 
     # Split dataset
     if limit:

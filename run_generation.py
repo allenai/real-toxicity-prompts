@@ -19,6 +19,7 @@
 
 import argparse
 import logging
+import math
 
 from pathlib import Path
 import numpy as np
@@ -161,11 +162,12 @@ def main():
         help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(MODEL_CLASSES.keys()),
     )
 
-    parser.add_argument("--no_prompt", action="store_true")
-    parser.add_argument("--num_return_sequences", type=int, default=None)
+    parser.add_argument("--num_generations", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--output_dir", type=str, default=None)
 
     parser.add_argument("--prompt", type=str, default="")
-    parser.add_argument("--length", type=int, default=200)
+    parser.add_argument("--length", type=int, default=20)
     parser.add_argument("--stop_token", type=str, default=None, help="Token at which text generation is stopped")
 
     parser.add_argument(
@@ -177,7 +179,7 @@ def main():
     parser.add_argument(
         "--repetition_penalty", type=float, default=1.0, help="primarily useful for CTRL model; in that case, use 1.2"
     )
-    parser.add_argument("--k", type=int, default=0)
+    parser.add_argument("--k", type=int, default=None)
     parser.add_argument("--p", type=float, default=0.9)
 
     parser.add_argument("--padding_text", type=str, default="", help="Padding text for Transfo-XL and XLNet.")
@@ -206,48 +208,63 @@ def main():
     args.length = adjust_length_to_model(args.length, max_sequence_length=model.config.max_position_embeddings)
     logger.info(args)
 
-    if args.no_prompt:
-        encoded_prompt = None
-    else:
-        prompt_text = args.prompt if args.prompt else input("Model prompt >>> ")
+    # Read prompt
+    prompt_text = args.prompt if args.prompt else input("Model prompt >>> ")
 
-        # Different models need different input formatting and/or extra arguments
-        requires_preprocessing = args.model_type in PREPROCESSING_FUNCTIONS.keys()
-        if requires_preprocessing:
-            prepare_input = PREPROCESSING_FUNCTIONS.get(args.model_type)
-            prompt_text = prepare_input(args, model, tokenizer, prompt_text)
-        encoded_prompt = tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
-        encoded_prompt = encoded_prompt.to(args.device)
+    # Different models need different input formatting and/or extra arguments
+    requires_preprocessing = args.model_type in PREPROCESSING_FUNCTIONS.keys()
+    if requires_preprocessing:
+        prepare_input = PREPROCESSING_FUNCTIONS.get(args.model_type)
+        prompt_text = prepare_input(args, model, tokenizer, prompt_text)
+    encoded_prompt = tokenizer.encode(prompt_text, add_special_tokens=False, return_tensors="pt")
+    encoded_prompt = encoded_prompt.to(args.device)
 
-    gen_out = Path('output') / 'gen_lt1'
-    gen_out.mkdir(parents=True)
-    texts = []
-    for batch in range(32):
+    # Create output directory
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    if output_dir:
+        output_dir.mkdir(parents=True)
+
+    outputs = []
+    i = 0
+    num_batches = math.ceil(args.num_generations / args.batch_size)
+    for batch in range(num_batches):
+        num_generations_remaining = args.num_generations - batch * args.batch_size
+        curr_batch_size = min(num_generations_remaining, args.batch_size)
+
         output_sequences = model.generate(
-            # input_ids=encoded_prompt,
-            max_length=200,
-            temperature=1.0,
-            # top_k=args.k,
-            top_p=0.9,
+            input_ids=encoded_prompt,
+            max_length=args.length,
+            temperature=args.temperature,
+            top_k=args.k,
+            top_p=args.p,
             repetition_penalty=args.repetition_penalty,
-            num_return_sequences=32,
+            num_return_sequences=curr_batch_size,
             do_sample=True,
-            # num_beams=4
         )
 
-        # Batch size == 1. to add more examples please use num_return_sequences > 1
-        generated_sequences = output_sequences[0].tolist()
-        for i, generated_sequence in enumerate(generated_sequences):
-            # TODO: handle padding
-            text = tokenizer.decode(generated_sequence[1:-1], clean_up_tokenization_spaces=True)
-            text = text[: text.find(args.stop_token) if args.stop_token else None]
-            texts.append(text)
+        for seq in output_sequences.view(-1, output_sequences.size(-1)):
+            # Handle case where prompt is stop token
+            seq = seq[1:] if args.prompt == args.stop_token else seq
+            # Decode sequence of ids
+            output = tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+            # Remove everything after end of text token
+            output = output[: output.find(args.stop_token) if args.stop_token else None]
 
-            out_f = gen_out / f"{batch}-{i}.txt"
-            out_f.write_text(text)
-            print(text)
+            # Save output
+            if output_dir:
+                (output_dir / f"generation_{i}.txt").write_text(output)
 
-    return texts
+            # Print output
+            print("************************************************")
+            print("Generation", i, f"- (sequence length {len(seq)})")
+            print("************************************************")
+            print(output)
+            print()
+
+            outputs.append(output)
+            i += 1
+
+    return outputs
 
 
 if __name__ == "__main__":
