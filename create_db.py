@@ -99,8 +99,12 @@ def main(database_path: str, responses_dir: str):
     Session.configure(bind=engine)
     session = Session()
 
-    tqdm.write('Counting responses... ', end='')
+    tqdm.write('Counting responses... ')
     num_responses = sum(1 for _ in responses_dir.iterdir())
+
+    tqdm.write(f'Number of responses: {num_responses}, batch size: {BATCH_SIZE}, limit: {LIMIT}')
+
+    tqdm.write(f'Reading responses into database...')
     responses_dir_iter = responses_dir.iterdir()
     tqdm.write(f'total: {num_responses}')
 
@@ -108,7 +112,7 @@ def main(database_path: str, responses_dir: str):
     tqdm.write(f'Reading responses into database...')
     try:
         # Add scores to our database
-        for i in trange(0, num_responses, BATCH_SIZE):
+        for i in trange(0, num_responses, BATCH_SIZE, dynamic_ncols=True):
             # Break if we will exceed our limit
             if LIMIT and i + BATCH_SIZE >= LIMIT:
                 break
