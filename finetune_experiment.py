@@ -11,13 +11,14 @@ from os import makedirs
 from constants import DATA_DIR, TEXTS_DIR
 
 RANDOM_STATE = 42
+COLUMN_NAME = 'filename'
 
 
 def save_data(experiment_dir: Path, dataset: pd.DataFrame, name: str, eos_token='<|endoftext|>'):
     metadata_file = experiment_dir / f'{name}.pkl'
     dataset.to_pickle(metadata_file)
 
-    text = dataset['id'].apply(lambda id: load_text(id + ".txt"))
+    text = dataset[COLUMN_NAME].apply(lambda filename: load_text(filename))
     text_file = experiment_dir / f'{name}.txt'
     print(*text, sep=eos_token, file=text_file.open('w'))
 
@@ -93,6 +94,16 @@ def run_experiment(query: str, engine: Engine, experiments_dir: Path, experiment
     train_model(experiment_output_dir, train_file, val_file, epochs=epochs)
 
 
+def quartile_experiment(quartile: int):
+    query = f"""
+        SELECT *, NTILE(4) OVER win as quartile
+        FROM responses
+        WHERE quartile = {quartile}
+        WINDOW win as (ORDER BY toxicity);
+    """
+    return (query, f'finetune_toxicity_quartile_{quartile}', None)
+
+
 def main():
     # Create sql connection
     database_path = DATA_DIR / 'perspective_api_responses.db'
@@ -100,10 +111,10 @@ def main():
 
     experiments_dir = Path() / 'experiments'
     experiments = (
-        ('select * from responses where toxicity < 0.01', 'finetune_toxicity_lt1', 10_000),
-        ('select * from responses where toxicity > 0.75', 'finetune_toxicity_gt75', 10_000),
-        ('select * from responses order by toxicity asc limit 100000', 'finetune_toxicity_bottom_100k', None),
-        ('select * from responses order by toxicity desc limit 100000', 'finetune_toxicity_top_100k', None),
+        quartile_experiment(1),
+        quartile_experiment(2),
+        quartile_experiment(3),
+        quartile_experiment(4),
     )
 
     for query, experiment_name, limit in experiments:
