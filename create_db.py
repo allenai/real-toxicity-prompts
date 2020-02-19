@@ -1,16 +1,21 @@
 import json
-from itertools import islice
+from itertools import chain
 from pathlib import Path
 from typing import List, Union
+from torch.utils.data import Dataset, DataLoader, SequentialSampler
 
 import click
 from sqlalchemy import Column, Float, String, Integer, ForeignKey
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from tqdm import trange, tqdm
+from tqdm import tqdm
 
-BATCH_SIZE = 100000
+from constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
+
+ATTRIBUTES_SET = set(PERSPECTIVE_API_ATTRIBUTES_LOWER)
+BATCH_SIZE = 10_000
+NUM_WORKERS = 8
 LIMIT = None
 
 Base = declarative_base()
@@ -21,7 +26,10 @@ class Response(Base):
     __tablename__ = 'responses'
     span_scores = relationship('SpanScore')
 
+    # Metadata
     filename = Column(String, primary_key=True)
+
+    # Attributes
     insult = Column(Float)
     severe_toxicity = Column(Float)
     toxicity = Column(Float)
@@ -38,14 +46,23 @@ class Response(Base):
 class SpanScore(Base):
     __tablename__ = 'span_scores'
 
+    # Metadata
     filename = Column(String, ForeignKey('responses.filename'), primary_key=True)
-    attribute = Column(String, primary_key=True)
     begin = Column(Integer, primary_key=True)
     end = Column(Integer, primary_key=True)
-    value = Column(Float)
+
+    # Attributes
+    insult = Column(Float)
+    severe_toxicity = Column(Float)
+    toxicity = Column(Float)
+    profanity = Column(Float)
+    sexually_explicit = Column(Float)
+    flirtation = Column(Float)
+    identity_attack = Column(Float)
+    threat = Column(Float)
 
     def __repr__(self):
-        return f"<SpanScore<filename={self.filename}, type={self.attribute}>"
+        return f"<SpanScore<filename={self.filename}, begin={self.begin}, end={self.end}>"
 
 
 def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
@@ -57,6 +74,7 @@ def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
     attribute_scores = response_json['attributeScores'].items()
 
     summary_scores = {}
+    span_scores = {}
     for attribute, scores in attribute_scores:
         attribute = attribute.lower()
 
@@ -67,17 +85,37 @@ def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
         # Save span scores
         for span_score_dict in scores['spanScores']:
             assert span_score_dict['score']['type'] == 'PROBABILITY'
-            span_score = SpanScore(filename=filename,
-                                   attribute=attribute,
-                                   begin=span_score_dict['begin'],
-                                   end=span_score_dict['end'],
-                                   value=span_score_dict['score']['value'])
-            rows.append(span_score)
+            span = (span_score_dict['begin'], span_score_dict['end'])
+            span_scores.setdefault(span, {})[attribute] = span_score_dict['score']['value']
 
     response = Response(filename=filename, **summary_scores)
     rows.append(response)
 
+    for span, attribute_span_scores in span_scores.items():
+        # All attributes should have values for the same spans (line-by-line)
+        assert ATTRIBUTES_SET == attribute_span_scores.keys()
+        begin, end = span
+        span_score = SpanScore(filename=filename, begin=begin, end=end, **attribute_span_scores)
+        rows.append(span_score)
+
     return rows
+
+
+class PerspectiveDataset(Dataset):
+    def __init__(self, data_dir: Path):
+        super().__init__()
+        self.files = list(data_dir.iterdir())
+
+    def __getitem__(self, idx):
+        response_file = self.files[idx]
+        # try:
+        rows = create_rows(response_file)
+        # except:
+        #     return []
+        return rows
+
+    def __len__(self):
+        return len(self.files)
 
 
 @click.command()
@@ -86,7 +124,11 @@ def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
 def main(database_path: str, responses_dir: str):
     responses_dir = Path(responses_dir)
     if not responses_dir.is_dir():
-        raise click.FileError('Responses directory does not exist')
+        raise click.ClickException('Responses directory does not exist')
+
+    database_path = Path(database_path)
+    if database_path.exists():
+        raise click.ClickException('Database already exists')
 
     engine = create_engine(f'sqlite:///{database_path}', echo=False)
 
@@ -99,39 +141,28 @@ def main(database_path: str, responses_dir: str):
     Session.configure(bind=engine)
     session = Session()
 
-    tqdm.write('Counting responses... ')
-    num_responses = sum(1 for _ in responses_dir.iterdir())
+    # Create dataloader
+    tqdm.write("Loading list of files...")
+    dataset = PerspectiveDataset(responses_dir)
+    sampler = SequentialSampler(dataset)
+    dataloader = DataLoader(dataset, BATCH_SIZE, shuffle=False, sampler=sampler, num_workers=NUM_WORKERS,
+                            collate_fn=lambda x: x)
 
-    tqdm.write(f'Number of responses: {num_responses}, batch size: {BATCH_SIZE}, limit: {LIMIT}')
+    tqdm.write(f'Number of files: {len(dataset)}, batch size: {BATCH_SIZE}, limit: {LIMIT}')
 
-    tqdm.write(f'Reading responses into database...')
-    responses_dir_iter = responses_dir.iterdir()
-    tqdm.write(f'total: {num_responses}')
-
-    tqdm.write(f'Batch size: {BATCH_SIZE}, limit: {LIMIT}')
     tqdm.write(f'Reading responses into database...')
     try:
         # Add scores to our database
-        for i in trange(0, num_responses, BATCH_SIZE, dynamic_ncols=True):
+        for i, rows_batch in enumerate(tqdm(dataloader)):
             # Break if we will exceed our limit
             if LIMIT and i + BATCH_SIZE >= LIMIT:
                 break
 
-            # Get batch of rows
-            rows = []
-            for file in islice(responses_dir_iter, BATCH_SIZE):
-                try:
-                    rows.extend(create_rows(file))
-                except Exception as e:
-                    print("Error while creating response:", e)
-
-            # If there are no more responses, break
-            if not rows:
-                break
-
+            rows = chain.from_iterable(rows_batch)
             session.bulk_save_objects(rows)
+            session.commit()
+            session.expunge_all()
 
-        session.commit()
     except Exception as e:
         print(e)
         session.rollback()
