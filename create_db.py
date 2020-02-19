@@ -108,10 +108,10 @@ class PerspectiveDataset(Dataset):
 
     def __getitem__(self, idx):
         response_file = self.files[idx]
-        # try:
-        rows = create_rows(response_file)
-        # except:
-        #     return []
+        try:
+            rows = create_rows(response_file)
+        except:
+            return []
         return rows
 
     def __len__(self):
