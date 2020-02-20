@@ -94,28 +94,22 @@ def run_experiment(query: str, engine: Engine, experiments_dir: Path, experiment
     train_model(experiment_output_dir, train_file, val_file, epochs=epochs)
 
 
-def quartile_experiment(quartile: int):
+def quintile_experiment(quintile: int, subsample_n=10_000):
     query = f"""
-        SELECT *, NTILE(4) OVER win as quartile
-        FROM responses
-        WHERE quartile = {quartile}
-        WINDOW win as (ORDER BY toxicity);
+        SELECT *
+        FROM responses_quintiles
+        WHERE quintile = {quintile}
     """
-    return (query, f'finetune_toxicity_quartile_{quartile}', None)
+    return query, f'finetune_toxicity_quintile_{quintile}', subsample_n
 
 
 def main():
     # Create sql connection
-    database_path = DATA_DIR / 'perspective_api_responses.db'
+    database_path = DATA_DIR / 'perspective-responses-v2.db'
     engine = create_engine(f'sqlite:///{database_path}', echo=False)
 
     experiments_dir = Path() / 'experiments'
-    experiments = (
-        quartile_experiment(1),
-        quartile_experiment(2),
-        quartile_experiment(3),
-        quartile_experiment(4),
-    )
+    experiments = (quintile_experiment(i) for i in range(1, 5 + 1))
 
     for query, experiment_name, limit in experiments:
         run_experiment(query, engine, experiments_dir, experiment_name, limit=limit, epochs=100)
