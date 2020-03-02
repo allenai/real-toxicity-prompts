@@ -11,7 +11,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from tqdm import tqdm
 
-from constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
+from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 
 ATTRIBUTES_SET = set(PERSPECTIVE_API_ATTRIBUTES_LOWER)
 BATCH_SIZE = 10_000

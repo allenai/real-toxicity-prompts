@@ -2,13 +2,14 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker
 from pathlib import Path
-from util import load_text
-import run_lm_finetuning
+from utils.utils import load_text
+from scripts.transformers import run_lm_finetuning
 import sys
 from os import makedirs
 
-from constants import DATA_DIR, TEXTS_DIR
+from utils.constants import DATA_DIR
 
 RANDOM_STATE = 42
 COLUMN_NAME = 'filename'
@@ -94,25 +95,36 @@ def run_experiment(query: str, engine: Engine, experiments_dir: Path, experiment
     train_model(experiment_output_dir, train_file, val_file, epochs=epochs)
 
 
-def quintile_experiment(quintile: int, subsample_n=10_000):
-    query = f"""
-        SELECT *
-        FROM responses_quintiles
-        WHERE quintile = {quintile}
-    """
-    return query, f'finetune_toxicity_quintile_{quintile}', subsample_n
-
-
 def main():
     # Create sql connection
     database_path = DATA_DIR / 'perspective-responses-v2.db'
     engine = create_engine(f'sqlite:///{database_path}', echo=False)
+    conn = engine.connect()
+
+    responses_percentiles_statement = """
+    CREATE TEMP TABLE responses_percentiles AS
+    SELECT responses.filename  AS filename,
+           NTILE(100) OVER win AS p
+    FROM responses
+        WINDOW
+            win AS (ORDER BY responses.toxicity);
+    """
+    conn.execute(responses_percentiles_statement)
 
     experiments_dir = Path() / 'experiments'
-    experiments = (quintile_experiment(i) for i in range(1, 5 + 1))
+    experiments = (
+        ("SELECT * FROM responses_percentiles WHERE responses_percentiles.p <= 2", 'finetune_toxicity_percentile_lte2',
+         None),
+        ("SELECT * FROM responses_percentiles WHERE responses_percentiles.p >= 40 AND responses_percentiles.p < 60",
+         'finetune_toxicity_percentile_middle_20_subsample', 155408),
+        (
+            "SELECT * FROM responses_percentiles WHERE responses_percentiles.p >= 99",
+            'finetune_toxicity_percentile_gte99',
+            None),
+    )
 
     for query, experiment_name, limit in experiments:
-        run_experiment(query, engine, experiments_dir, experiment_name, limit=limit, epochs=100)
+        run_experiment(query, conn, experiments_dir, experiment_name, limit=limit, epochs=100)
 
 
 if __name__ == '__main__':

@@ -1,7 +1,6 @@
 import csv
 import json
 import time
-from math import ceil
 from pathlib import Path
 from typing import List, Union, Optional
 
@@ -9,7 +8,7 @@ import click
 from googleapiclient import discovery
 from tqdm import tqdm
 
-from constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_KEY, PERSPECTIVE_API_LEN_LIMIT
+from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_LEN_LIMIT
 
 
 def perspective_request(text: str, service):
@@ -106,11 +105,11 @@ def request(corpus: Union[List[Path], List[str]], responses_dir: Path, failures_
 
 
 @click.command()
-@click.argument('corpus')
-@click.argument('responses_dir')
+@click.argument('corpus', required=True)
+@click.option('responses_dir', required=True)
+@click.option('--api_key', required=True, help='Google API key with Perspective API access.')
 @click.option('--failures_file', default=None, help='CSV file to log API failures to.')
 @click.option('--requests_per_second', default=25, help='Requests per second to the Perspective API.')
-@click.option('--api_key', default=PERSPECTIVE_API_KEY, help='Google API key with Perspective API access.')
 def main(corpus, responses_dir, failures_file, api_key, requests_per_second):
     # Load corpus
     corpus = Path(corpus)

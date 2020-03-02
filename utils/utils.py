@@ -1,4 +1,4 @@
-from constants import TEXTS_DIR
+from utils.constants import TEXTS_DIR
 
 
 def load_text(filename: str) -> str:
