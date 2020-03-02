@@ -5,64 +5,19 @@ from typing import List, Union
 from torch.utils.data import Dataset, DataLoader, SequentialSampler
 
 import click
-from sqlalchemy import Column, Float, String, Integer, ForeignKey
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
+from utils.db import Response, SpanScore
 
 ATTRIBUTES_SET = set(PERSPECTIVE_API_ATTRIBUTES_LOWER)
 BATCH_SIZE = 10_000
 NUM_WORKERS = 8
 LIMIT = None
 
-Base = declarative_base()
 Session = sessionmaker()
-
-
-class Response(Base):
-    __tablename__ = 'responses'
-    span_scores = relationship('SpanScore')
-
-    # Metadata
-    filename = Column(String, primary_key=True)
-
-    # Attributes
-    insult = Column(Float)
-    severe_toxicity = Column(Float)
-    toxicity = Column(Float)
-    profanity = Column(Float)
-    sexually_explicit = Column(Float)
-    flirtation = Column(Float)
-    identity_attack = Column(Float)
-    threat = Column(Float)
-
-    def __repr__(self):
-        return f"<Response<filename={self.filename}>"
-
-
-class SpanScore(Base):
-    __tablename__ = 'span_scores'
-
-    # Metadata
-    filename = Column(String, ForeignKey('responses.filename'), primary_key=True)
-    begin = Column(Integer, primary_key=True)
-    end = Column(Integer, primary_key=True)
-
-    # Attributes
-    insult = Column(Float)
-    severe_toxicity = Column(Float)
-    toxicity = Column(Float)
-    profanity = Column(Float)
-    sexually_explicit = Column(Float)
-    flirtation = Column(Float)
-    identity_attack = Column(Float)
-    threat = Column(Float)
-
-    def __repr__(self):
-        return f"<SpanScore<filename={self.filename}, begin={self.begin}, end={self.end}>"
 
 
 def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:

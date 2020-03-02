@@ -1,15 +1,13 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker
 from pathlib import Path
 from utils.utils import load_text
 from scripts.transformers import run_lm_finetuning
 import sys
 from os import makedirs
 
-from utils.constants import DATA_DIR
+from utils.db import perspective_db_engine
 
 RANDOM_STATE = 42
 COLUMN_NAME = 'filename'
@@ -97,8 +95,7 @@ def run_experiment(query: str, engine: Engine, experiments_dir: Path, experiment
 
 def main():
     # Create sql connection
-    database_path = DATA_DIR / 'perspective-responses-v2.db'
-    engine = create_engine(f'sqlite:///{database_path}', echo=False)
+    engine = perspective_db_engine()
     conn = engine.connect()
 
     responses_percentiles_statement = """
