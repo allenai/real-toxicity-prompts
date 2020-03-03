@@ -34,7 +34,7 @@ class GPT2Generator:
         set_seed(seed, n_gpu)
 
         # Initialize the model and tokenizer
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path)
+        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token=self.STOP_TOKEN)
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
 
     def generate(self,
@@ -49,32 +49,34 @@ class GPT2Generator:
         max_length = adjust_length_to_model(max_length, max_sequence_length=self.model.config.max_position_embeddings)
 
         # Different models need different input formatting and/or extra arguments
-        encoded_prompt = self.tokenizer.encode(prompt,
-                                               add_special_tokens=False,
-                                               return_tensors="pt")
-        encoded_prompt = encoded_prompt.to(self.device)
-
-        print(encoded_prompt)
+        encoded_prompt = self.tokenizer.batch_encode_plus(prompt, add_special_tokens=False, return_tensors='pt')
+        input_ids = encoded_prompt['input_ids'].to(self.device)
 
         # Generate
-        output_sequences = self.model.generate(
-            input_ids=encoded_prompt,
+        output_ids = self.model.generate(
+            input_ids=input_ids,
             max_length=max_length,
             temperature=temperature,
             top_k=k,
             top_p=p,
             repetition_penalty=repetition_penalty,
             num_return_sequences=num_return_sequences,
-            do_sample=True
+            do_sample=True,
+            pad_token_id=self.tokenizer.pad_token_id
         )
 
-        print(output_sequences.shape)
+        # Decode
+        decoded_outputs = [self._decode(seq, prompt, stop_token)
+                           for seq in output_ids.view(-1, output_ids.size(-1))]
 
-        for seq in output_sequences.view(-1, output_sequences.size(-1)):
-            # Handle case where prompt is stop token
-            seq = seq[1:] if prompt == stop_token else seq
-            # Decode sequence of ids
-            output = self.tokenizer.decode(seq, clean_up_tokenization_spaces=True)
-            # Remove everything after end of text token
-            output = output[: output.find(stop_token) if stop_token else None]
-            yield output
+        return decoded_outputs
+
+    def _decode(self, seq, prompt, stop_token):
+        # Handle case where prompt is stop token
+        # TODO: remove below line and just remove prompt from the sequence
+        seq = seq[1:] if prompt == stop_token else seq
+        # Decode sequence of ids
+        output = self.tokenizer.decode(seq, clean_up_tokenization_spaces=True)
+        # Remove everything after end of text token
+        output = output[: output.find(stop_token) if stop_token else None]
+        return output
