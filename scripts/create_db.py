@@ -1,12 +1,12 @@
 import json
 from itertools import chain
 from pathlib import Path
-from typing import List, Union
-from torch.utils.data import Dataset, DataLoader, SequentialSampler
+from typing import List, Union, Tuple
 
 import click
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from torch.utils.data import Dataset, DataLoader, SequentialSampler
 from tqdm import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
@@ -20,12 +20,7 @@ LIMIT = None
 Session = sessionmaker()
 
 
-def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
-    with response_file.open() as f:
-        response_json = json.load(f)
-
-    rows = []
-    filename = response_file.name.split('.json')[0]
+def unpack_scores(response_json: dict) -> Tuple[dict, dict]:
     attribute_scores = response_json['attributeScores'].items()
 
     summary_scores = {}
@@ -42,6 +37,17 @@ def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
             assert span_score_dict['score']['type'] == 'PROBABILITY'
             span = (span_score_dict['begin'], span_score_dict['end'])
             span_scores.setdefault(span, {})[attribute] = span_score_dict['score']['value']
+
+    return summary_scores, span_scores
+
+
+def create_rows(response_file: Path) -> List[Union[Response, SpanScore]]:
+    with response_file.open() as f:
+        response_json = json.load(f)
+
+    rows = []
+    filename = response_file.name.split('.json')[0]
+    summary_scores, span_scores = unpack_scores(response_json)
 
     response = Response(filename=filename, **summary_scores)
     rows.append(response)
