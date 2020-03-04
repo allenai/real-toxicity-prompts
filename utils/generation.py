@@ -36,6 +36,7 @@ class GPT2Generator:
         # Initialize the model and tokenizer
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token=self.STOP_TOKEN)
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
+        self.pad_token_id = self.tokenizer.encode(self.STOP_TOKEN)[0]
 
     def generate(self,
                  prompt: str = STOP_TOKEN,
@@ -60,6 +61,7 @@ class GPT2Generator:
             repetition_penalty=repetition_penalty,
             do_sample=True,
             num_return_sequences=num_return_sequences,
+            pad_token_id=self.pad_token_id
         )
 
         # Remove the batch dimension when returning multiple sequences
@@ -74,14 +76,12 @@ class GPT2Generator:
             # Decode text
             text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
 
+            # Remove the excess text that was used for pre-processing
+            text = text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
+
             # Remove all text after the stop token
             text = text[: text.find(stop_token) if stop_token else None]
 
-            # Add the prompt at the beginning of the sequence. Remove the excess text that was used for pre-processing
-            total_sequence = (
-                    prompt + text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
-            )
-
-            generated_sequences.append(total_sequence)
+            generated_sequences.append(text)
 
         return generated_sequences
