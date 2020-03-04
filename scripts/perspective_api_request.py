@@ -74,6 +74,9 @@ def request(corpus: Union[List[Path], List[str]],
         nonlocal num_failures
         nonlocal responses
 
+        if not responses_dir:
+            responses.append(None if exception else response)
+
         if exception:
             log_failure(failures_file, text_filename, exception)
             num_failures += 1
@@ -83,8 +86,6 @@ def request(corpus: Union[List[Path], List[str]],
                     json.dump(response, f)
             except OSError as e:
                 tqdm.write(f'Error while saving response for {text_filename}: {e}')
-        else:
-            responses.append(response)
 
     pbar = tqdm(total=len(corpus))
     for batch in load_batches(corpus, requests_per_second):
