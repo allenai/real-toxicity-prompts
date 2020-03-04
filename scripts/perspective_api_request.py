@@ -59,25 +59,35 @@ def load_batches(docs: Union[List[Path], List[str]], batch_size: int):
         yield batch
 
 
-def request(corpus: Union[List[Path], List[str]], responses_dir: Path, failures_file: Optional[Path], service,
-            batch_size: int):
+def request(corpus: Union[List[Path], List[str]],
+            api_key: str,
+            requests_per_second: int,
+            responses_dir: Optional[Path] = None,
+            failures_file: Optional[Path] = None) -> Optional[List[dict]]:
+    # Generate API client object dynamically based on service name and version
+    service = discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
+
     num_failures = 0
+    responses: List[dict] = []
 
     def response_callback(text_filename, response, exception):
         nonlocal num_failures
+        nonlocal responses
 
         if exception:
             log_failure(failures_file, text_filename, exception)
             num_failures += 1
-        else:
+        elif responses_dir:
             try:
                 with response_path(responses_dir, text_filename).open('w') as f:
                     json.dump(response, f)
             except OSError as e:
                 tqdm.write(f'Error while saving response for {text_filename}: {e}')
+        else:
+            responses.append(response)
 
     pbar = tqdm(total=len(corpus))
-    for batch in load_batches(corpus, batch_size):
+    for batch in load_batches(corpus, requests_per_second):
         start_time = time.time()
 
         # Create batch request
@@ -96,17 +106,20 @@ def request(corpus: Union[List[Path], List[str]], responses_dir: Path, failures_
 
         # Update progress bar
         pbar.set_description(f"Failures: {num_failures}")
-        pbar.update(batch_size)
+        pbar.update(requests_per_second)
 
         # Rate limit to 1 batch request per second
         request_time = time.time() - start_time
         if request_time < 1:
             time.sleep(1 - request_time)
 
+    if not responses_dir:
+        return responses
+
 
 @click.command()
-@click.argument('corpus', required=True)
-@click.option('responses_dir', required=True)
+@click.option('--corpus', required=True)
+@click.option('--responses_dir', required=True)
 @click.option('--api_key', required=True, help='Google API key with Perspective API access.')
 @click.option('--failures_file', default=None, help='CSV file to log API failures to.')
 @click.option('--requests_per_second', default=25, help='Requests per second to the Perspective API.')
@@ -130,12 +143,9 @@ def main(corpus, responses_dir, failures_file, api_key, requests_per_second):
     if failures_file.exists():
         raise click.FileError("Failures file already exists")
 
-    # Generate API client object dynamically based on service name and version
-    service = discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
-
     # Make requests
     tqdm.write("Requesting from Perspective API...")
-    request(corpus, responses_dir, failures_file, service, requests_per_second)
+    request(corpus, api_key, requests_per_second, responses_dir=responses_dir, failures_file=failures_file)
 
 
 if __name__ == '__main__':
