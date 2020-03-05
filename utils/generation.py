@@ -1,7 +1,8 @@
-from typing import Union, List, Optional
+from pathlib import Path
+from typing import Union, Optional
+
 import numpy as np
 import torch
-
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
@@ -27,7 +28,10 @@ def adjust_length_to_model(length, max_sequence_length):
 class GPT2Generator:
     STOP_TOKEN = "<|endoftext|>"
 
-    def __init__(self, model_name_or_path: str = 'gpt2', seed: int = 42):
+    def __init__(self, model_name_or_path: Union[str, Path] = 'gpt2', seed: int = 42):
+        if isinstance(model_name_or_path, Path):
+            model_name_or_path = str(model_name_or_path)
+
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         n_gpu = torch.cuda.device_count()
