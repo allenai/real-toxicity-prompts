@@ -6,7 +6,7 @@ from typing import List, Union, Optional
 
 import click
 from googleapiclient import discovery
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_LEN_LIMIT
 
