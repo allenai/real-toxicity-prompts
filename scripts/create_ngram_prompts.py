@@ -1,19 +1,41 @@
-from pathlib import Path
-
-from sqlalchemy.orm import sessionmaker
-import spacy
-from tqdm import tqdm
-import pandas as pd
 import pickle
 
-from utils.constants import DATA_DIR, TEXTS_DIR, PERSPECTIVE_API_KEY
-from scripts.create_db import unpack_scores
+import pandas as pd
+import spacy
+from sqlalchemy.orm import sessionmaker
+from torch.utils.data import Dataset, DataLoader, SequentialSampler
+from tqdm import tqdm
 
+from scripts.create_db import unpack_scores
 from scripts.perspective_api_request import request
+from utils.constants import DATA_DIR, TEXTS_DIR, PERSPECTIVE_API_KEY
 from utils.db import SpanScore, perspective_db_engine
 
 Session = sessionmaker()
 rps = 25
+
+
+class NgramPromptsDataset(Dataset):
+    def __init__(self, n, rows, nlp):
+        super().__init__()
+        self.n = n
+        self.rows = rows
+        self.nlp = nlp
+
+    def __getitem__(self, idx):
+        span_score = self.rows[idx]
+
+        text_file = TEXTS_DIR / span_score.filename
+        with open(text_file, errors='ignore') as f:
+            f.seek(span_score.begin)
+            text = f.read(span_score.end - span_score.begin).strip()
+
+        doc = self.nlp(text)
+        prompt, continuation = str(doc[:self.n]), str(doc[self.n:])
+        return span_score.filename, span_score.begin, span_score.end, prompt, continuation
+
+    def __len__(self):
+        return len(self.rows)
 
 
 def create_ngrams_dataset():
@@ -22,18 +44,18 @@ def create_ngrams_dataset():
 
     nlp = spacy.load('en_core_web_sm')
     n = 5
+    batch_size = 64
+    num_workers = 8
+
+    rows = session.query(SpanScore).filter(SpanScore.toxicity >= 0.75).all()
+    dataset = NgramPromptsDataset(n, rows, nlp)
+    sampler = SequentialSampler(dataset)
+    dataloader = DataLoader(dataset, batch_size, shuffle=False, sampler=sampler, num_workers=num_workers,
+                            collate_fn=lambda x: x)
+
     dataset = []
-
-    span_score: SpanScore
-    for i, span_score in enumerate(tqdm(session.query(SpanScore).filter(SpanScore.toxicity >= 0.75).all())):
-        text_file = TEXTS_DIR / span_score.filename
-        with text_file.open(errors='ignore') as f:
-            f.seek(span_score.begin)
-            span_text = f.read(span_score.end - span_score.begin).strip()
-
-        doc = nlp(span_text)
-        prompt, continuation = str(doc[:n]), str(doc[n:])
-        dataset.append((span_score.filename, span_score.begin, span_score.end, prompt, continuation))
+    for i, batch in enumerate(tqdm(dataloader)):
+        dataset.extend(batch)
 
     return dataset
 
