@@ -51,5 +51,5 @@ class SpanScore(Base):
         return f"<SpanScore<filename={self.filename}, begin={self.begin}, end={self.end}>"
 
 
-def perspective_db_engine() -> Engine:
-    return create_engine(f'sqlite:///{PERSPECTIVE_DB}', echo=False)
+def perspective_db_engine(**kwargs) -> Engine:
+    return create_engine(f'sqlite:///{PERSPECTIVE_DB}', **kwargs)

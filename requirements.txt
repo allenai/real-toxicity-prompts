@@ -1,3 +1,12 @@
+numpy
+googleapiclient
+pandas
+scikit-learn
+torch
+click
+tqdm
+spacy
+sqlalchemy
 # transformers
 git+git://github.com/huggingface/transformers@ea2600bd5f1d36f2fb61958be21db5b901e33884
 
