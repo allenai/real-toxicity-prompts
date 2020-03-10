@@ -64,7 +64,7 @@ def request_perspective_scores(data):
     filenames, begins, ends, prompts, continuations = zip(*data)
 
     prompt_responses = request(prompts, api_key=PERSPECTIVE_API_KEY, requests_per_second=rps)
-    prompt_responses_unpacked = [unpack_scores(x) for x in prompt_responses if x]
+    prompt_responses_unpacked = [unpack_scores(x) if x else None for x in prompt_responses]
 
     continuation_responses = request(continuations, api_key=PERSPECTIVE_API_KEY, requests_per_second=rps)
     continuation_responses_unpacked = [unpack_scores(x) if x else None for x in continuation_responses]
