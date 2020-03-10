@@ -94,8 +94,3 @@ def create_ngram_prompts():
     scores = request_perspective_scores(data)
     df = to_dataframe(scores)
     return df
-
-
-df = create_ngram_prompts()
-pkl = DATA_DIR / 'ngram-beginning-prompts.pkl'
-pickle.dump(df, pkl.open('wb'))
