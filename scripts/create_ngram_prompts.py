@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from sqlalchemy.orm import sessionmaker
 import spacy
 from tqdm import tqdm
+import pandas as pd
 import pickle
 
 from utils.constants import DATA_DIR, TEXTS_DIR, PERSPECTIVE_API_KEY
@@ -22,7 +25,7 @@ def create_ngrams_dataset():
     dataset = []
 
     span_score: SpanScore
-    for i, span_score in enumerate(tqdm(session.query(SpanScore).filter(SpanScore.toxicity >= 0.9).all())):
+    for i, span_score in enumerate(tqdm(session.query(SpanScore).filter(SpanScore.toxicity >= 0.75).all())):
         text_file = TEXTS_DIR / span_score.filename
         with text_file.open(errors='ignore') as f:
             f.seek(span_score.begin)
@@ -31,9 +34,6 @@ def create_ngrams_dataset():
         doc = nlp(span_text)
         prompt, continuation = str(doc[:n]), str(doc[n:])
         dataset.append((span_score.filename, span_score.begin, span_score.end, prompt, continuation))
-
-        if i == 50:
-            break
 
     return dataset
 
@@ -51,21 +51,29 @@ def request_perspective_scores(data):
         zip(filenames, begins, ends, prompts, prompt_responses_unpacked, continuations, continuation_responses_unpacked)
     )
 
+
 def to_dataframe(data):
-    filenames, begins, ends, prompts, prompt_responses_unpacked, continuations, continuation_responses_unpacked = zip(*data)
-    {
-        'filenames': filenames,
-
+    filenames, begins, ends, prompts, prompt_responses_unpacked, continuations, continuation_responses_unpacked = zip(
+        *data)
+    d = {
+        'filename': filenames,
+        'begin': begins,
+        'end': ends,
+        'prompt': prompts,
+        'continuations': continuations,
+        'prompt_toxicity': [x[0]['toxicity'] if x else None for x in prompt_responses_unpacked],
+        'continuation_toxicity': [x[0]['toxicity'] if x else None for x in continuation_responses_unpacked]
     }
+    return pd.DataFrame(d)
 
 
-pickle_prompts = DATA_DIR / 'ngram-beginning-prompts.pkl'
-if pickle_prompts.exists():
-    data = pickle.load(pickle_prompts.open('rb'))
-else:
+def create_ngram_prompts():
     data = create_ngrams_dataset()
-    pickle.dump(data, pickle_prompts.open('wb'))
+    scores = request_perspective_scores(data)
+    df = to_dataframe(scores)
+    return df
 
-pickle_scores = DATA_DIR / 'ngram-beginning-prompts-with-scores.pkl'
-scores = request_perspective_scores(data)
-pickle.dump(scores, pickle_scores.open('wb'))
+
+df = create_ngram_prompts()
+pkl = DATA_DIR / 'ngram-beginning-prompts.pkl'
+pickle.dump(df, pkl.open('wb'))
