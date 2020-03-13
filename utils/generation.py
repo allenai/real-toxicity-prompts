@@ -109,17 +109,18 @@ def generate_2():
         'The purpose of this workshop is to check whether we can']
 
     # encode plus batch handles multiple batches and automatically creates attention_masks
-    seq_len = 11
     do_sample = True
     top_k = 0
     top_p = 0.
     temperature = 1.0
 
-    encodings_dict = tokenizer.batch_encode_plus(prompt_text, max_length=seq_len, pad_to_max_length=True)
+    encodings_dict = tokenizer.batch_encode_plus(prompt_text, pad_to_max_length=True)
 
     # ideally we should be able to just input the following two variables to the function model.generate() ... => to be implemented soon!  # noqa: E501
     input_ids = torch.tensor(encodings_dict['input_ids'])
     attn_mask = torch.tensor(encodings_dict['attention_mask'])
+
+    batch_size, seq_len = input_ids.shape
 
     num_tokens_to_produce = 20
     pad_token_id = tokenizer.pad_token_id
