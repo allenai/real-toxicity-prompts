@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union, Optional
+from typing import Union, Optional, List
 
 import numpy as np
 import torch
@@ -73,6 +73,9 @@ class GPT2Generator:
         if len(output_sequences.shape) > 2:
             output_sequences.squeeze_()
 
+        return self._decode(output_sequences, encoded_prompt)
+
+    def _decode(self, output_sequences: List[torch.Tensor], encoded_prompt: Optional[torch.Tensor] = None):
         generated_sequences = []
 
         for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
@@ -82,10 +85,11 @@ class GPT2Generator:
             text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
 
             # Remove the excess text that was used for pre-processing
-            text = text[len(self.tokenizer.decode(encoded_prompt[0], clean_up_tokenization_spaces=True)):]
+            if encoded_prompt:
+                text = text[len(self.tokenizer.decode(encoded_prompt, clean_up_tokenization_spaces=True)):]
 
             # Remove all text after the stop token
-            text = text[: text.find(stop_token) if stop_token else None]
+            text = text[: text.find(self.STOP_TOKEN) if self.STOP_TOKEN else None]
 
             generated_sequences.append(text)
 
