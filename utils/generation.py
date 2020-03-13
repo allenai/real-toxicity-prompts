@@ -3,7 +3,7 @@ from typing import Union, Optional
 
 import numpy as np
 import torch
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, modeling_utils
 import torch.nn.functional as F
 
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
@@ -106,6 +106,11 @@ def generate_2():
 
     # encode plus batch handles multiple batches and automatically creates attention_masks
     seq_len = 11
+    do_sample = True
+    top_k = 0
+    top_p = 0.
+    temperature = 1.0
+
     encodings_dict = tokenizer.batch_encode_plus(prompt_text, max_length=seq_len, pad_to_max_length=True)
 
     # ideally we should be able to just input the following two variables to the function model.generate() ... => to be implemented soon!  # noqa: E501
@@ -136,7 +141,18 @@ def generate_2():
         else:
             next_token_logits = outputs[0][:, -1, :]
 
-        next_tokens = torch.argmax(next_token_logits, dim=-1)
+        if do_sample:
+            # Temperature (higher temperature => more likely to sample low probability tokens)
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
+            # Top-p/top-k filtering
+            next_token_logits = modeling_utils.top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+            # Sample
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+        else:
+            # Greedy decoding
+            next_tokens = torch.argmax(next_token_logits, dim=-1)
 
         # this updates which sentences have not seen an <EOS> token so far
         # if one <EOS> token was seen the sentence is finished
