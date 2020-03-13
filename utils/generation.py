@@ -40,7 +40,7 @@ class GPT2Generator:
 
         # Initialize the model and tokenizer
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path)
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token='<PAD>')
+        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token=self.STOP_TOKEN)
         # self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
         # self.pad_token_id = self.tokenizer.encode(self.STOP_TOKEN)[0]
 
