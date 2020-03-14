@@ -34,15 +34,18 @@ class GPT2Generator:
             model_name_or_path = str(model_name_or_path)
 
         # Set up device
-        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # n_gpu = torch.cuda.device_count()
         # set_seed(seed, n_gpu)
 
         # Initialize the model and tokenizer
-        self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path)
+        self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
+
+        # IMPORTANT: Note that setting the pad token like this in the constructor gives the pad_token the
+        # pad_token_id = 50256, which normally belongs to the <EOS> token_id in GPT2. This is a very ugly
+        # way that works at the moment of setting the pad_token_id to the <EOS> token that is already
+        # included in the vocab size.
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token=self.STOP_TOKEN)
-        # self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
-        # self.pad_token_id = self.tokenizer.encode(self.STOP_TOKEN)[0]
 
     # def generate(self,
     #              prompt: str = STOP_TOKEN,
@@ -75,65 +78,51 @@ class GPT2Generator:
     #         output_sequences.squeeze_()
     #
     #     return self._decode(output_sequences, encoded_prompt)
-    #
-    # def _decode(self, output_sequences: List[torch.Tensor], encoded_prompt: Optional[torch.Tensor] = None):
-    #     generated_sequences = []
-    #
-    #     for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
-    #         generated_sequence = generated_sequence.tolist()
-    #
-    #         # Decode text
-    #         text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
-    #
-    #         # Remove the excess text that was used for pre-processing
-    #         if encoded_prompt:
-    #             text = text[len(self.tokenizer.decode(encoded_prompt, clean_up_tokenization_spaces=True)):]
-    #
-    #         # Remove all text after the stop token
-    #         text = text[: text.find(self.STOP_TOKEN) if self.STOP_TOKEN else None]
-    #
-    #         generated_sequences.append(text)
-    #
-    #     return generated_sequences
 
-    def generate_2(self):
-        # model = GPT2LMHeadModel.from_pretrained('gpt2')
-        # tokenizer = GPT2Tokenizer.from_pretrained('gpt2', pad_token='<PAD>')
-        # IMPORTANT: Note that setting the <PAD> token like this itn the constructor gives the
-        # pad_token the pad_token_id = 50256, which normally belongs to <BOS> token_ids in GPT2
-        # This is a very ugly way that works at the moment of setting the pad_token_id to the <BOS> token that is already included in the vocab size. This will be updated in the coming weeks! # noqa: E501
+    def _decode(self, output_sequences: List[torch.Tensor], encoded_prompt: Optional[torch.Tensor] = None):
+        generated_sequences = []
 
-        prompt_text = [
-            'in this paper we',
-            'we are trying to',
-            'The purpose of this workshop is to check whether we can']
+        for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
+            generated_sequence = generated_sequence.tolist()
 
+            # Decode text
+            text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
+
+            # Remove the excess text that was used for pre-processing
+            if encoded_prompt:
+                text = text[len(self.tokenizer.decode(encoded_prompt, clean_up_tokenization_spaces=True)):]
+
+            # Remove all text after the stop token
+            text = text[: text.find(self.STOP_TOKEN) if self.STOP_TOKEN else None]
+
+            generated_sequences.append(text)
+
+        return generated_sequences
+
+    def generate_2(self,
+                   prompt_text: Union[str, List[str]],
+                   num_tokens_to_produce=20,
+                   do_sample=True,
+                   top_k=0,
+                   top_p=0.9,
+                   temperature=1.0):
         # encode plus batch handles multiple batches and automatically creates attention_masks
-        do_sample = True
-        top_k = 0
-        top_p = 0.
-        temperature = 1.0
+        encodings_dict = self.tokenizer.batch_encode_plus(prompt_text, pad_to_max_length=True, return_tensors='pt')
 
-        encodings_dict = self.tokenizer.batch_encode_plus(prompt_text, pad_to_max_length=True)
-
-        # ideally we should be able to just input the following two variables to the function model.generate() ... => to be implemented soon!  # noqa: E501
-        input_ids = torch.tensor(encodings_dict['input_ids'])
-        attn_mask = torch.tensor(encodings_dict['attention_mask'])
+        input_ids = encodings_dict['input_ids'].to(self.device)
+        attn_mask = encodings_dict['attention_mask'].to(self.device)
 
         batch_size, seq_len = input_ids.shape
 
-        num_tokens_to_produce = 20
-        pad_token_id = self.tokenizer.pad_token_id
-        eos_token_id = self.tokenizer.eos_token_id
-        eos_not_in_sents = torch.ones(input_ids.shape[0]).long()
+        eos_not_in_sents = torch.ones(input_ids.shape[0]).long().to(self.device)
 
         # we need to get the token ids of the last non-padded value
         last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
-        start_idx = inp_idx = (last_non_masked_idx).view(-1, 1).repeat(1, self.tokenizer.vocab_size).unsqueeze(1)
-        past = None
+        start_idx = last_non_masked_idx.view(-1, 1).repeat(1, self.tokenizer.vocab_size).unsqueeze(1).to(self.device)
+        past = None  # TODO: use this
 
         # get correct position ids
-        position_ids = torch.tensor([list(range(seq_len)) for i in range(input_ids.shape[0])])
+        position_ids = torch.tensor([list(range(seq_len)) for i in range(input_ids.shape[0])]).to(self.device)
         for i, position_ids_slice in enumerate(position_ids):
             position_ids_slice[last_non_masked_idx[i]:] = position_ids_slice[last_non_masked_idx[i]]
 
@@ -161,14 +150,14 @@ class GPT2Generator:
 
             # this updates which sentences have not seen an <EOS> token so far
             # if one <EOS> token was seen the sentence is finished
-            eos_not_in_sents.mul_(next_tokens.ne(eos_token_id).long())
+            eos_not_in_sents.mul_(next_tokens.ne(self.tokenizer.eos_token_id).long())
 
             # either append a padding token here if <EOS> has been seen or append next token
-            tokens_to_add = next_tokens * (eos_not_in_sents) + pad_token_id * (1 - eos_not_in_sents)
+            tokens_to_add = next_tokens * eos_not_in_sents + self.tokenizer.pad_token_id * (1 - eos_not_in_sents)
 
             # Update input_ids, attn_mask and position_ids
             input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
-            attn_mask = torch.cat([attn_mask, torch.ones((attn_mask.shape[0], 1)).long()], dim=1)
+            attn_mask = torch.cat([attn_mask, torch.ones((attn_mask.shape[0], 1)).long().to(self.device)], dim=1)
             position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
         [print(self.tokenizer.decode(output, skip_special_tokens=True)) for output in input_ids]
@@ -181,4 +170,8 @@ class GPT2Generator:
 
 def test_generate_2():
     generator = GPT2Generator()
-    generator.generate_2()
+    prompt_text = [
+        'in this paper we',
+        'we are trying to',
+        'The purpose of this workshop is to check whether we can']
+    generator.generate_2(prompt_text)
