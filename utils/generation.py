@@ -35,8 +35,8 @@ class GPT2Generator:
 
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # n_gpu = torch.cuda.device_count()
-        # set_seed(seed, n_gpu)
+        n_gpu = torch.cuda.device_count()
+        set_seed(seed, n_gpu)
 
         # Initialize the model and tokenizer
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
@@ -152,12 +152,9 @@ class GPT2Generator:
             attn_mask = torch.cat([attn_mask, attn_mask.new_ones((attn_mask.size(0), 1))], dim=1)
             position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
-        [print(self.tokenizer.decode(output, skip_special_tokens=True)) for output in input_ids]
-
-
-# def test_generate():
-#     generator = GPT2Generator()
-#     generator.generate()
+        out = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+               for output in input_ids]
+        return out
 
 
 def test_generate_2():
@@ -166,4 +163,5 @@ def test_generate_2():
         'in this paper we',
         'we are trying to',
         'The purpose of this workshop is to check whether we can']
-    generator.generate_2(prompt_text)
+    out = generator.generate_2(prompt_text)
+    print(*out, sep='\n')
