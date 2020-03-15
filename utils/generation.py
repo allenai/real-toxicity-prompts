@@ -112,26 +112,18 @@ class GPT2Generator:
         input_ids = encodings_dict['input_ids'].to(self.device)
         attn_mask = encodings_dict['attention_mask'].to(self.device)
 
-        batch_size, seq_len = input_ids.shape
+        position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
+        eos_not_in_sents = torch.ones(input_ids.size(0), dtype=torch.long, device=self.device)
 
-        eos_not_in_sents = torch.ones(input_ids.shape[0]).long().to(self.device)
-
-        # we need to get the token ids of the last non-padded value
-        last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
-        start_idx = last_non_masked_idx.view(-1, 1).repeat(1, self.tokenizer.vocab_size).unsqueeze(1).to(self.device)
         past = None  # TODO: use this
-
-        # get correct position ids
-        position_ids = torch.tensor([list(range(seq_len)) for i in range(input_ids.shape[0])]).to(self.device)
-        for i, position_ids_slice in enumerate(position_ids):
-            position_ids_slice[last_non_masked_idx[i]:] = position_ids_slice[last_non_masked_idx[i]]
 
         for step in range(num_tokens_to_produce):
             outputs = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids)
 
             # in the first decoding step, we want to use the 'real' last position for each sentence
             if step == 0:
-                next_token_logits = outputs[0].gather(1, start_idx).squeeze(1)
+                last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
+                next_token_logits = outputs[0][range(outputs[0].size(0)), last_non_masked_idx, :]
             else:
                 next_token_logits = outputs[0][:, -1, :]
 
@@ -157,7 +149,7 @@ class GPT2Generator:
 
             # Update input_ids, attn_mask and position_ids
             input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
-            attn_mask = torch.cat([attn_mask, torch.ones((attn_mask.shape[0], 1)).long().to(self.device)], dim=1)
+            attn_mask = torch.cat([attn_mask, attn_mask.new_ones((attn_mask.size(0), 1))], dim=1)
             position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
         [print(self.tokenizer.decode(output, skip_special_tokens=True)) for output in input_ids]
