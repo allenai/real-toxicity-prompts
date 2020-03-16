@@ -111,21 +111,23 @@ class GPT2Generator:
 
         input_ids = encodings_dict['input_ids'].to(self.device)
         attn_mask = encodings_dict['attention_mask'].to(self.device)
+        batch_size, input_seq_len = input_ids.shape
 
         position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
-        eos_not_in_sents = torch.ones(input_ids.size(0), dtype=torch.long, device=self.device)
+        eos_not_in_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
-        past = None  # TODO: use this
+        # TODO: use this to speed up generation
+        past = None
 
         for step in range(num_tokens_to_produce):
-            outputs = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids)
+            logits, past = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids)
 
             # in the first decoding step, we want to use the 'real' last position for each sentence
             if step == 0:
                 last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
-                next_token_logits = outputs[0][range(outputs[0].size(0)), last_non_masked_idx, :]
+                next_token_logits = logits[range(batch_size), last_non_masked_idx, :]
             else:
-                next_token_logits = outputs[0][:, -1, :]
+                next_token_logits = logits[:, -1, :]
 
             if do_sample:
                 # Temperature (higher temperature => more likely to sample low probability tokens)
@@ -149,12 +151,12 @@ class GPT2Generator:
 
             # Update input_ids, attn_mask and position_ids
             input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
-            attn_mask = torch.cat([attn_mask, attn_mask.new_ones((attn_mask.size(0), 1))], dim=1)
+            attn_mask = torch.cat([attn_mask, attn_mask.new_ones((batch_size, 1))], dim=1)
             position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
-        out = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-               for output in input_ids]
-        return out
+        decoded_outputs = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                           for output in input_ids[:, input_seq_len:]]
+        return decoded_outputs
 
 
 def test_generate_2():
