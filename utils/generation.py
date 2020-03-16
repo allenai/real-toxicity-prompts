@@ -46,68 +46,20 @@ class GPT2Generator:
         # way that works at the moment of setting the pad_token_id to the <EOS> token that is already
         # included in the vocab size.
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token=self.STOP_TOKEN)
+        assert self.tokenizer.eos_token == self.tokenizer.pad_token
 
-    # def generate(self,
-    #              prompt: str = STOP_TOKEN,
-    #              num_return_sequences: int = 1,
-    #              max_length: int = 20,
-    #              temperature: float = 1.0,
-    #              k: Optional[int] = None,
-    #              p: float = 0.9,
-    #              repetition_penalty: float = 1.0,
-    #              stop_token: str = STOP_TOKEN):
-    #     max_length = adjust_length_to_model(max_length, max_sequence_length=self.model.config.max_position_embeddings)
-    #
-    #     encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt")
-    #     encoded_prompt = encoded_prompt.to(self.device)
-    #
-    #     output_sequences = self.model.generate(
-    #         input_ids=encoded_prompt,
-    #         max_length=max_length + len(encoded_prompt[0]),
-    #         temperature=temperature,
-    #         top_k=k,
-    #         top_p=p,
-    #         repetition_penalty=repetition_penalty,
-    #         do_sample=True,
-    #         num_return_sequences=num_return_sequences,
-    #         pad_token_id=self.pad_token_id
-    #     )
-    #
-    #     # Remove the batch dimension when returning multiple sequences
-    #     if len(output_sequences.shape) > 2:
-    #         output_sequences.squeeze_()
-    #
-    #     return self._decode(output_sequences, encoded_prompt)
+    def generate(self,
+                 prompt: Union[str, List[str]],
+                 max_len: int = 20,
+                 sample: bool = True,
+                 k: int = 0,
+                 p: float = 0.9,
+                 temperature: float = 1.0):
+        if isinstance(prompt, str):
+            prompt = [prompt]
 
-    def _decode(self, output_sequences: List[torch.Tensor], encoded_prompt: Optional[torch.Tensor] = None):
-        generated_sequences = []
-
-        for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
-            generated_sequence = generated_sequence.tolist()
-
-            # Decode text
-            text = self.tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
-
-            # Remove the excess text that was used for pre-processing
-            if encoded_prompt:
-                text = text[len(self.tokenizer.decode(encoded_prompt, clean_up_tokenization_spaces=True)):]
-
-            # Remove all text after the stop token
-            text = text[: text.find(self.STOP_TOKEN) if self.STOP_TOKEN else None]
-
-            generated_sequences.append(text)
-
-        return generated_sequences
-
-    def generate_2(self,
-                   prompt_text: Union[str, List[str]],
-                   num_tokens_to_produce=20,
-                   do_sample=True,
-                   top_k=0,
-                   top_p=0.9,
-                   temperature=1.0):
         # encode plus batch handles multiple batches and automatically creates attention_masks
-        encodings_dict = self.tokenizer.batch_encode_plus(prompt_text, pad_to_max_length=True, return_tensors='pt')
+        encodings_dict = self.tokenizer.batch_encode_plus(prompt, pad_to_max_length=True, return_tensors='pt')
 
         input_ids = encodings_dict['input_ids'].to(self.device)
         attn_mask = encodings_dict['attention_mask'].to(self.device)
@@ -119,7 +71,7 @@ class GPT2Generator:
         # TODO: use this to speed up generation
         past = None
 
-        for step in range(num_tokens_to_produce):
+        for step in range(max_len):
             logits, past = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids)
 
             # in the first decoding step, we want to use the 'real' last position for each sentence
@@ -129,12 +81,12 @@ class GPT2Generator:
             else:
                 next_token_logits = logits[:, -1, :]
 
-            if do_sample:
+            if sample:
                 # Temperature (higher temperature => more likely to sample low probability tokens)
                 if temperature != 1.0:
                     next_token_logits = next_token_logits / temperature
                 # Top-p/top-k filtering
-                next_token_logits = modeling_utils.top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+                next_token_logits = modeling_utils.top_k_top_p_filtering(next_token_logits, top_k=k, top_p=p)
                 # Sample
                 probs = F.softmax(next_token_logits, dim=-1)
                 next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
@@ -159,11 +111,12 @@ class GPT2Generator:
         return decoded_outputs
 
 
-def test_generate_2():
+def test_generate():
     generator = GPT2Generator()
-    prompt_text = [
+    prompt = [
         'in this paper we',
         'we are trying to',
-        'The purpose of this workshop is to check whether we can']
-    out = generator.generate_2(prompt_text)
+        'The purpose of this workshop is to check whether we can'
+    ]
+    out = generator.generate(prompt)
     print(*out, sep='\n')
