@@ -1,19 +1,13 @@
 from pathlib import Path
 from typing import Union, Optional, List
 
-import numpy as np
 import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, modeling_utils
 import torch.nn.functional as F
 
+from utils import utils
+
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
-
-
-def set_seed(seed, n_gpu):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if n_gpu > 0:
-        torch.cuda.manual_seed_all(seed)
 
 
 def adjust_length_to_model(length, max_sequence_length):
@@ -36,7 +30,7 @@ class GPT2Generator:
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         n_gpu = torch.cuda.device_count()
-        set_seed(seed, n_gpu)
+        utils.set_seed(seed, n_gpu)
 
         # Initialize the model and tokenizer
         self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
@@ -58,7 +52,6 @@ class GPT2Generator:
         if isinstance(prompt, str):
             prompt = [prompt]
 
-        # encode plus batch handles multiple batches and automatically creates attention_masks
         encodings_dict = self.tokenizer.batch_encode_plus(prompt, pad_to_max_length=True, return_tensors='pt')
 
         input_ids = encodings_dict['input_ids'].to(self.device)

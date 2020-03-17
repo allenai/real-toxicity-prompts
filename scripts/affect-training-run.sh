@@ -1,0 +1,13 @@
+PYTHONPATH=. python scripts/transformers/run_language_modeling.py \
+	--output_dir=output/affect/affectv1/finetune_output \
+	--model_type=affect-gpt2 \
+	--model_name_or_path=gpt2 \
+	--do_train \
+	--num_train_epochs=10 \
+	--evaluate_during_training \
+	--log_after_epoch \
+	--save_after_epoch \
+	--patience=2 \
+	--per_gpu_train_batch_size=1 \
+	--per_gpu_eval_batch_size=1 \
+	--gradient_accumulation_steps=8

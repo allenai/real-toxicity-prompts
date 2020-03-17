@@ -1,11 +1,12 @@
 from sqlalchemy import Column, Float, String, Integer, ForeignKey, create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, sessionmaker
 
 from utils.constants import PERSPECTIVE_DB
 
 Base = declarative_base()
+Session = sessionmaker()
 
 
 class Response(Base):
@@ -53,3 +54,9 @@ class SpanScore(Base):
 
 def perspective_db_engine(**kwargs) -> Engine:
     return create_engine(f'sqlite:///{PERSPECTIVE_DB}', **kwargs)
+
+
+def perspective_db_session(**kwargs) -> Session:
+    engine = perspective_db_engine(**kwargs)
+    session = Session(bind=engine)
+    return session

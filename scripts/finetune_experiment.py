@@ -3,7 +3,7 @@ from sklearn.model_selection import train_test_split
 from sqlalchemy.engine import Engine
 from pathlib import Path
 from utils.utils import load_text
-from scripts.transformers import run_lm_finetuning
+from scripts.transformers import run_language_modeling
 import sys
 from os import makedirs
 
@@ -35,7 +35,7 @@ def train_model(output_dir: Path,
     eval_steps //= gradient_accumulation_steps
 
     sys.argv = [
-        "run_lm_finetuning.py",
+        "run_language_modeling.py",
         f'--output_dir={output_dir}',
         '--model_type=gpt2',
         '--model_name_or_path=gpt2',
@@ -54,7 +54,7 @@ def train_model(output_dir: Path,
         f'--per_gpu_eval_batch_size={batch_size}',
         f'--gradient_accumulation_steps={gradient_accumulation_steps}',
     ]
-    run_lm_finetuning.main()
+    run_language_modeling.main()
 
 
 def run_experiment(query: str, engine: Engine, experiments_dir: Path, experiment_name: str, test_size=0.1, limit=None,

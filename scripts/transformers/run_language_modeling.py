@@ -19,7 +19,6 @@ GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while B
 using a masked language modeling (MLM) loss.
 """
 
-
 import argparse
 import glob
 import logging
@@ -28,6 +27,7 @@ import pickle
 import random
 import re
 import shutil
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -63,18 +63,21 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
+from models.affect_lm import AffectGPT2LMHeadModel
+from utils.datasets import AffectDataset
+
+_AFFECT = "affect"
 
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ImportError:
     from tensorboardX import SummaryWriter
 
-
 logger = logging.getLogger(__name__)
-
 
 MODEL_CLASSES = {
     "gpt2": (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
+    "affect-gpt2": (GPT2Config, AffectGPT2LMHeadModel, GPT2Tokenizer),
     "openai-gpt": (OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
     "bert": (BertConfig, BertForMaskedLM, BertTokenizer),
     "roberta": (RobertaConfig, RobertaForMaskedLM, RobertaTokenizer),
@@ -86,6 +89,9 @@ MODEL_CLASSES = {
 class TextDataset(Dataset):
     def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
         assert os.path.isfile(file_path)
+
+        block_size = block_size - (tokenizer.max_len - tokenizer.max_len_single_sentence)
+
         directory, filename = os.path.split(file_path)
         cached_features_file = os.path.join(
             directory, args.model_type + "_cached_lm_" + str(block_size) + "_" + filename
@@ -105,7 +111,7 @@ class TextDataset(Dataset):
             tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
 
             for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
-                self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i : i + block_size]))
+                self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i: i + block_size]))
             # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
             # If your dataset is small, first you should loook for a bigger one :-) and second you
             # can change this behavior by adding (model specific) padding.
@@ -118,7 +124,7 @@ class TextDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, item):
-        return torch.tensor(self.examples[item])
+        return torch.tensor(self.examples[item], dtype=torch.long)
 
 
 class LineByLineTextDataset(Dataset):
@@ -130,21 +136,26 @@ class LineByLineTextDataset(Dataset):
         logger.info("Creating features from dataset file at %s", file_path)
 
         with open(file_path, encoding="utf-8") as f:
-            lines = [line for line in f.read().splitlines() if len(line) > 0]
+            lines = [line for line in f.read().splitlines() if (len(line) > 0 and not line.isspace())]
 
-        self.examples = tokenizer.batch_encode_plus(lines, max_length=block_size)["input_ids"]
+        self.examples = tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=block_size)["input_ids"]
 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, i):
-        return torch.tensor(self.examples[i])
+        return torch.tensor(self.examples[i], dtype=torch.long)
 
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     file_path = args.eval_data_file if evaluate else args.train_data_file
     if args.line_by_line:
         return LineByLineTextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
+    elif args.model_type == 'affect-gpt2':
+        affect_cached_features_file = (
+                Path(args.output_dir).parent / f'{args.model_type}_cached_lm_{args.block_size}_affect.txt'
+        )
+        return AffectDataset(tokenizer, args, affect_cached_features_file, args.block_size)
     else:
         return TextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
 
@@ -195,6 +206,12 @@ def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
 
 def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
+
+    if tokenizer.mask_token is None:
+        raise ValueError(
+            "This tokenizer does not have a mask token which is necessary for masked language modeling. Remove the --mlm flag if you want to use this tokenizer."
+        )
+
     labels = inputs.clone()
     # We sample a few tokens in each sequence for masked-LM training (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
     probability_matrix = torch.full(labels.shape, args.mlm_probability)
@@ -233,9 +250,14 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             return pad_sequence(examples, batch_first=True)
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
+    if args.model_type == 'affect-gpt2':
+        collate_fn = None
+    else:
+        collate_fn = collate
+
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate
+        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate_fn
     )
 
     if args.max_steps > 0:
@@ -260,9 +282,9 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     # Check if saved optimizer or scheduler states exist
     if (
-        args.model_name_or_path
-        and os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt"))
-        and os.path.isfile(os.path.join(args.model_name_or_path, "scheduler.pt"))
+            args.model_name_or_path
+            and os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt"))
+            and os.path.isfile(os.path.join(args.model_name_or_path, "scheduler.pt"))
     ):
         # Load in optimizer and scheduler states
         optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
@@ -320,7 +342,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     tr_loss, logging_loss = 0.0, 0.0
     best_eval_loss = None
-    num_evals_without_progress = 0
+    evals_without_improvement = 0
+
     if args.log_after_epoch:
         args.logging_steps = len(train_dataloader) // args.gradient_accumulation_steps
         logger.info(f"Updated logging steps: {args.logging_steps}")
@@ -344,11 +367,19 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 steps_trained_in_current_epoch -= 1
                 continue
 
+            if args.model_type == 'affect-gpt2':
+                batch, affects = batch
+                affects = affects.to(args.device)
+
             inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             model.train()
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            if args.model_type == 'affect-gpt2':
+                outputs = model(inputs, labels=labels, affect_labels=affects)
+            else:
+                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -376,26 +407,23 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Log metrics
                     if (
-                        args.local_rank == -1 and args.evaluate_during_training
+                            args.local_rank == -1 and args.evaluate_during_training
                     ):  # Only evaluate when single GPU otherwise metrics may not average well
                         results = evaluate(args, model, tokenizer)
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-
-                        if args.patience > 0:
+                        if args.patience:
+                            # Keep track of best loss to determine if we should stop early
                             eval_loss = results["loss"]
                             if not best_eval_loss or eval_loss < best_eval_loss:
+                                evals_without_improvement = 0
                                 best_eval_loss = eval_loss
                             else:
-                                num_evals_without_progress += 1
-                                if num_evals_without_progress >= args.patience:
-                                    # TODO: refactor this to break out of method
-                                    logger.info(f"Patience: threshold ({args.patience}) exceeded, stopping training early.")
-                                    tb_writer.close()
-                                    return global_step, tr_loss / global_step
-                                else:
-                                    logger.info(f"Patience: {num_evals_without_progress} / {args.patience} evaluations with non-decreasing loss.")
-
+                                evals_without_improvement += 1
+                                if evals_without_improvement >= args.patience:
+                                    logger.info(
+                                        f"Patience: threshold ({args.patience}) exceeded, stopping training early"
+                                    )
                     tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                     logging_loss = tr_loss
@@ -420,10 +448,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                     torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                     logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
-            if args.max_steps > 0 and global_step > args.max_steps:
+            if ((args.patience and evals_without_improvement >= args.patience)
+                    or (args.max_steps > 0 and global_step > args.max_steps)):
                 epoch_iterator.close()
                 break
-        if args.max_steps > 0 and global_step > args.max_steps:
+        if ((args.patience and evals_without_improvement >= args.patience)
+                or (args.max_steps > 0 and global_step > args.max_steps)):
             train_iterator.close()
             break
 
@@ -443,6 +473,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         os.makedirs(eval_output_dir, exist_ok=True)
 
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+
     # Note that DistributedSampler samples randomly
 
     def collate(examples: List[torch.Tensor]):
@@ -450,9 +481,14 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
             return pad_sequence(examples, batch_first=True)
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
+    if args.model_type == 'affect-gpt2':
+        collate_fn = None
+    else:
+        collate_fn = collate
+
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(
-        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate
+        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate_fn
     )
 
     # multi-gpu evaluate
@@ -468,19 +504,26 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     model.eval()
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        if args.model_type == 'affect-gpt2':
+            batch, affects = batch
+            affects = affects.to(args.device)
+
         inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
 
         with torch.no_grad():
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            if args.model_type == 'affect-gpt2':
+                outputs = model(inputs, labels=labels, affect_labels=affects)
+            else:
+                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
         nb_eval_steps += 1
 
     eval_loss = eval_loss / nb_eval_steps
-
     eval_loss_result = torch.tensor(eval_loss)
+
     result = {
         "perplexity": torch.exp(eval_loss_result),
         "loss": eval_loss_result
@@ -500,8 +543,9 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required parameters
+    # TODO: add assert for required
     parser.add_argument(
-        "--train_data_file", default=None, type=str, required=True, help="The input training data file (a text file)."
+        "--train_data_file", default=None, type=str, required=False, help="The input training data file (a text file)."
     )
     parser.add_argument(
         "--output_dir",
@@ -565,8 +609,8 @@ def main():
         default=-1,
         type=int,
         help="Optional input sequence length after tokenization."
-        "The training dataset will be truncated in block of this size for training."
-        "Default to the model max input length for single sentence inputs (take into account special tokens).",
+             "The training dataset will be truncated in block of this size for training."
+             "Default to the model max input length for single sentence inputs (take into account special tokens).",
     )
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the dev set.")
@@ -599,17 +643,16 @@ def main():
     )
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
-    # TODO: add assert for evaluate_during_training
     parser.add_argument(
         "--patience",
         type=int,
-        default=-1,
-        help="If n > 0: Stop training after evaluating n times with non-decreasing loss."
-             "Must be used with evaluate_during_training."
+        default=None,
+        help="Stop training after evaluating this many times consecutively with non-decreasing loss. "
+             "Must be used with --evaluate_during_training."
     )
-    parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
+    parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument("--log_after_epoch", action="store_true", help="Log after each epoch. Override logging_steps.")
-    parser.add_argument("--save_steps", type=int, default=50, help="Save checkpoint every X updates steps.")
     parser.add_argument("--save_after_epoch", action="store_true", help="Save after each epoch. Override save_steps.")
     parser.add_argument(
         "--save_total_limit",
@@ -641,7 +684,7 @@ def main():
         type=str,
         default="O1",
         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
-        "See details at https://nvidia.github.io/apex/amp.html",
+             "See details at https://nvidia.github.io/apex/amp.html",
     )
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument("--server_ip", type=str, default="", help="For distant debugging.")
@@ -666,16 +709,22 @@ def main():
             args.model_name_or_path = sorted_checkpoints[-1]
 
     if (
-        os.path.exists(args.output_dir)
-        and os.listdir(args.output_dir)
-        and args.do_train
-        and not args.overwrite_output_dir
+            os.path.exists(args.output_dir)
+            and os.listdir(args.output_dir)
+            and args.do_train
+            and not args.overwrite_output_dir
     ):
         raise ValueError(
             "Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(
                 args.output_dir
             )
         )
+
+    if args.patience:
+        if not args.evaluate_during_training:
+            raise ValueError("Patience must be used with --evaluate_during_training.")
+        if args.patience <= 0:
+            raise ValueError("Patience must be an integer greater than 0.")
 
     # Setup distant debugging if needed
     if args.server_ip and args.server_port:
@@ -689,7 +738,7 @@ def main():
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        args.n_gpu = torch.cuda.device_count()
+        args.n_gpu = 0 if args.no_cuda else torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
@@ -731,7 +780,12 @@ def main():
     if args.tokenizer_name:
         tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:
-        tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        if args.model_type == 'affect-gpt2':
+            tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path,
+                                                        cache_dir=args.cache_dir,
+                                                        pad_token='<|endoftext|>')
+        else:
+            tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     else:
         raise ValueError(
             "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
@@ -739,10 +793,10 @@ def main():
         )
 
     if args.block_size <= 0:
-        args.block_size = tokenizer.max_len_single_sentence
+        args.block_size = tokenizer.max_len
         # Our input block size will be the max possible for the model
     else:
-        args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
+        args.block_size = min(args.block_size, tokenizer.max_len)
 
     if args.model_name_or_path:
         model = model_class.from_pretrained(

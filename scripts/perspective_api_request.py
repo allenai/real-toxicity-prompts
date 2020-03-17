@@ -63,7 +63,8 @@ def request(corpus: Union[List[Path], List[str]],
             api_key: str,
             requests_per_second: int,
             responses_dir: Optional[Path] = None,
-            failures_file: Optional[Path] = None) -> Optional[List[dict]]:
+            failures_file: Optional[Path] = None,
+            should_yield=False) -> Optional[List[dict]]:
     # Generate API client object dynamically based on service name and version
     service = discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
 
@@ -103,18 +104,28 @@ def request(corpus: Union[List[Path], List[str]],
             batch_request.add(perspective_request(text, service), callback=response_callback, request_id=request_id)
 
         # Make request
-        batch_request.execute()
+        try:
+            batch_request.execute()
+        except Exception as e:
+            num_failures += requests_per_second
+            for request_id, _ in batch:
+                log_failure(failures_file, request_id, str(e))
 
         # Update progress bar
         pbar.set_description(f"Failures: {num_failures}")
         pbar.update(requests_per_second)
+
+        if should_yield:
+            for response in responses:
+                yield response
+            responses = []
 
         # Rate limit to 1 batch request per second
         request_time = time.time() - start_time
         if request_time < 1:
             time.sleep(1 - request_time)
 
-    if not responses_dir:
+    if not responses_dir and not should_yield:
         return responses
 
 
