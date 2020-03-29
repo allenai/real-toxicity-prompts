@@ -1,7 +1,7 @@
 # Language Model Toxicity
 
 ## Getting Started
-`TODO`
+- `conda env create -f environment.yml`
 
 ## Structure
 ### Code structure
