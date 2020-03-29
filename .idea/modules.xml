@@ -3,7 +3,6 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/language-model-toxicity.iml" filepath="$PROJECT_DIR$/.idea/language-model-toxicity.iml" />
-      <module fileurl="file://$PROJECT_DIR$/../transformers/.idea/transformers.iml" filepath="$PROJECT_DIR$/../transformers/.idea/transformers.iml" />
     </modules>
   </component>
 </project>
