@@ -153,10 +153,8 @@ def load_and_cache_examples(args, tokenizer, evaluate=False):
     if args.line_by_line:
         return LineByLineTextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
     elif args.model_type == 'affect-gpt2':
-        affect_cached_features_file = (
-                Path(args.output_dir).parent / f'{args.model_type}_cached_lm_{args.block_size}_affect.txt'
-        )
-        return AffectDataset(tokenizer, args, affect_cached_features_file, args.block_size)
+        parent_dir = Path(args.output_dir).parent
+        return AffectDataset(tokenizer, args, parent_dir, evaluate, args.block_size)
     else:
         return TextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
 
@@ -697,7 +695,7 @@ def main():
             "BERT and RoBERTa-like models do not have LM heads but masked LM heads. They must be run using the --mlm "
             "flag (masked language modeling)."
         )
-    if args.eval_data_file is None and args.do_eval:
+    if args.eval_data_file is None and args.model_type != 'affect-gpt2' and args.do_eval:
         raise ValueError(
             "Cannot do evaluation without an evaluation data file. Either supply a file to --eval_data_file "
             "or remove the --do_eval argument."

@@ -1,11 +1,13 @@
 import logging
 import pickle
 from pathlib import Path
-from typing import List
 
+import pandas as pd
 import torch
+from sklearn.model_selection import train_test_split
 from sqlalchemy.orm import sessionmaker
 from torch.utils.data import Dataset
+from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizer
 
 from utils.constants import TEXTS_DIR, PERSPECTIVE_API_ATTRIBUTES
@@ -41,43 +43,39 @@ class AffectDataset(Dataset):
     def __init__(self,
                  tokenizer: PreTrainedTokenizer,
                  args,
-                 cached_features_file: Path,
-                 block_size=512):
+                 parent_dir: Path,
+                 evaluate: bool,
+                 block_size=512,
+                 test_size=0.1):
         block_size = block_size - (tokenizer.max_len - tokenizer.max_len_single_sentence)
+
+        cached_features_file = (
+                parent_dir / f'{args.model_type}_cached_lm_{args.block_size}_affect.txt'
+        )
 
         if cached_features_file.exists() and not args.overwrite_cache:
             logger.info("Loading features from cached file %s", cached_features_file)
             with cached_features_file.open('rb') as handle:
-                self.examples = pickle.load(handle)
+                cached = pickle.load(handle)
         else:
-            rows = self.load_perspective_rows()
+            df = self.load_perspective_rows()
+
+            # Split data and save with metadata
+            train, test = train_test_split(df, test_size=test_size)
+            train.to_pickle(parent_dir / 'train.pkl')
+            test.to_pickle(parent_dir / 'test.pkl')
 
             logger.info(f"Creating features from perspective database query")
-
-            self.examples = []
-            for row in rows:
-                # Load text and tokenize
-                text_file = TEXTS_DIR / row.filename
-                text = text_file.read_text(encoding='utf-8', errors='replace')[row.begin:row.end]
-                tokens = tokenizer.encode(text, max_length=block_size, return_tensors='pt').squeeze()
-
-                # Create affect vector from row
-                affect = create_affect_vector(
-                    row.toxicity,
-                    row.severe_toxicity,
-                    row.identity_attack,
-                    row.insult,
-                    row.threat,
-                    row.profanity,
-                    row.sexually_explicit,
-                    row.flirtation
-                ).round()
-
-                self.examples.append((tokenizer.build_inputs_with_special_tokens(tokens), affect))
+            train_examples = self.create_examples(train, tokenizer, block_size)
+            test_examples = self.create_examples(test, tokenizer, block_size)
 
             logger.info("Saving features into cached file %s", cached_features_file)
+            cached = {'train': train_examples, 'test': test_examples}
             with cached_features_file.open('wb') as handle:
-                pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(cached, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # Load examples
+        self.examples = cached['test'] if evaluate else cached['train']
 
     def __len__(self):
         return len(self.examples)
@@ -86,22 +84,48 @@ class AffectDataset(Dataset):
         return self.examples[item]
 
     @staticmethod
-    def load_perspective_rows(limit_rows=100_000) -> List[SpanScore]:
+    def create_examples(df: pd.DataFrame, tokenizer: PreTrainedTokenizer, block_size: int):
+        examples = []
+        for i, row in tqdm(df.iterrows(), total=len(df), desc='Creating examples'):
+            # Load text and tokenize
+            text_file = TEXTS_DIR / row.filename
+            text = text_file.read_text(encoding='utf-8', errors='replace')[row.begin:row.end].strip()
+            tokens = tokenizer.encode(text, max_length=block_size, return_tensors='pt').squeeze()
+
+            # Create affect vector from row
+            affect = create_affect_vector(
+                row.toxicity,
+                row.severe_toxicity,
+                row.identity_attack,
+                row.insult,
+                row.threat,
+                row.profanity,
+                row.sexually_explicit,
+                row.flirtation
+            ).round()
+
+            examples.append((tokenizer.build_inputs_with_special_tokens(tokens), affect))
+
+        return examples
+
+    @staticmethod
+    def load_perspective_rows(limit_rows=100_000) -> pd.DataFrame:
         logger.info(f"Querying {limit_rows} rows from perspective database")
 
         session = perspective_db_session()
-
-        low_tox_rows = session.query(SpanScore). \
+        low_tox_query = session.query(SpanScore). \
             order_by(SpanScore.toxicity). \
-            limit(limit_rows // 2). \
-            all()
-        high_tox_rows = session.query(SpanScore). \
-            order_by(SpanScore.toxicity.desc()). \
-            limit(limit_rows // 2). \
-            all()
+            limit(limit_rows // 2)
+        low_tox_rows = pd.read_sql(low_tox_query.statement, con=low_tox_query.session.bind)
 
-        if len(low_tox_rows) + len(high_tox_rows) < limit_rows:
+        high_tox_query = session.query(SpanScore). \
+            order_by(SpanScore.toxicity.desc()). \
+            limit(limit_rows // 2)
+        high_tox_rows = pd.read_sql(high_tox_query.statement, con=high_tox_query.session.bind)
+
+        rows = low_tox_rows.append(high_tox_rows)
+
+        if len(rows) < limit_rows:
             raise RuntimeError("Selected perspective subset not large enough to subsample from")
 
-        rows = low_tox_rows + high_tox_rows
         return rows
