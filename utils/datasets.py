@@ -17,6 +17,26 @@ logger = logging.getLogger(__name__)
 NUM_AFFECTS = len(PERSPECTIVE_API_ATTRIBUTES)
 
 
+def create_affect_vector(toxicity: float = 0.,
+                         severe_toxicity: float = 0.,
+                         identity_attack: float = 0.,
+                         insult: float = 0.,
+                         threat: float = 0.,
+                         profanity: float = 0.,
+                         sexually_explicit: float = 0.,
+                         flirtation: float = 0.) -> torch.Tensor:
+    return torch.tensor([
+        insult,
+        severe_toxicity,
+        toxicity,
+        profanity,
+        sexually_explicit,
+        flirtation,
+        identity_attack,
+        threat
+    ])
+
+
 class AffectDataset(Dataset):
     def __init__(self,
                  tokenizer: PreTrainedTokenizer,
@@ -42,22 +62,22 @@ class AffectDataset(Dataset):
                 tokens = tokenizer.encode(text, max_length=block_size, pad_to_max_length=True, return_tensors='pt')
 
                 # Create affect vector from row
-                affect = torch.tensor([
-                    row.insult,
-                    row.severe_toxicity,
+                affect = create_affect_vector(
                     row.toxicity,
+                    row.severe_toxicity,
+                    row.identity_attack,
+                    row.insult,
+                    row.threat,
                     row.profanity,
                     row.sexually_explicit,
-                    row.flirtation,
-                    row.identity_attack,
-                    row.threat
-                ]).round()
+                    row.flirtation
+                ).round()
 
                 self.examples.append((tokenizer.build_inputs_with_special_tokens(tokens), affect))
 
-            logger.info("Saving features into cached file %s", cached_features_file)
-            with cached_features_file.open('wb') as handle:
-                pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                logger.info("Saving features into cached file %s", cached_features_file)
+                with cached_features_file.open('wb') as handle:
+                    pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
         return len(self.examples)

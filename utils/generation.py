@@ -1,9 +1,9 @@
 from pathlib import Path
-from typing import Union, Optional, List
+from typing import Union, List
 
 import torch
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, modeling_utils
 import torch.nn.functional as F
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, modeling_utils, GPT2PreTrainedModel
 
 from utils import utils
 
@@ -23,24 +23,30 @@ def adjust_length_to_model(length, max_sequence_length):
 class GPT2Generator:
     STOP_TOKEN = "<|endoftext|>"
 
-    def __init__(self, model_name_or_path: Union[str, Path] = 'gpt2', seed: int = 42):
-        if isinstance(model_name_or_path, Path):
-            model_name_or_path = str(model_name_or_path)
-
+    def __init__(self, model: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', tokenizer: str = 'gpt2', seed: int = 42):
         # Set up device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         n_gpu = torch.cuda.device_count()
         utils.set_seed(seed, n_gpu)
 
-        # Initialize the model and tokenizer
-        self.model = GPT2LMHeadModel.from_pretrained(model_name_or_path).to(self.device)
+        # Set up model
+        if isinstance(model, Path) or isinstance(model, str):
+            model = GPT2LMHeadModel.from_pretrained(str(model))
+        self.model = model.to(self.device)
 
+        # Set up tokenizer
         # IMPORTANT: Note that setting the pad token like this in the constructor gives the pad_token the
         # pad_token_id = 50256, which normally belongs to the <EOS> token_id in GPT2. This is a very ugly
         # way that works at the moment of setting the pad_token_id to the <EOS> token that is already
         # included in the vocab size.
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name_or_path, pad_token=self.STOP_TOKEN)
+        self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer, pad_token=self.STOP_TOKEN)
         assert self.tokenizer.eos_token == self.tokenizer.pad_token
+
+    def __repr__(self):
+        return f'<GPT2Generator model_name_or_path="{self.model}">'
+
+    def __call__(self, *args, **kwargs):
+        return self.generate(*args, **kwargs)
 
     def generate(self,
                  prompt: Union[str, List[str]],
@@ -48,7 +54,8 @@ class GPT2Generator:
                  sample: bool = True,
                  k: int = 0,
                  p: float = 0.9,
-                 temperature: float = 1.0):
+                 temperature: float = 1.0,
+                 **model_kwargs) -> List[str]:
         if isinstance(prompt, str):
             prompt = [prompt]
 
@@ -64,40 +71,44 @@ class GPT2Generator:
         # TODO: use this to speed up generation
         past = None
 
-        for step in range(max_len):
-            logits, past = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids)
+        self.model.eval()
 
-            # in the first decoding step, we want to use the 'real' last position for each sentence
-            if step == 0:
-                last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
-                next_token_logits = logits[range(batch_size), last_non_masked_idx, :]
-            else:
-                next_token_logits = logits[:, -1, :]
+        with torch.no_grad():
+            for step in range(max_len):
+                logits, past = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids,
+                                          **model_kwargs)
 
-            if sample:
-                # Temperature (higher temperature => more likely to sample low probability tokens)
-                if temperature != 1.0:
-                    next_token_logits = next_token_logits / temperature
-                # Top-p/top-k filtering
-                next_token_logits = modeling_utils.top_k_top_p_filtering(next_token_logits, top_k=k, top_p=p)
-                # Sample
-                probs = F.softmax(next_token_logits, dim=-1)
-                next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
-            else:
-                # Greedy decoding
-                next_tokens = torch.argmax(next_token_logits, dim=-1)
+                # in the first decoding step, we want to use the 'real' last position for each sentence
+                if step == 0:
+                    last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
+                    next_token_logits = logits[range(batch_size), last_non_masked_idx, :]
+                else:
+                    next_token_logits = logits[:, -1, :]
 
-            # this updates which sentences have not seen an <EOS> token so far
-            # if one <EOS> token was seen the sentence is finished
-            eos_not_in_sents.mul_(next_tokens.ne(self.tokenizer.eos_token_id).long())
+                if sample:
+                    # Temperature (higher temperature => more likely to sample low probability tokens)
+                    if temperature != 1.0:
+                        next_token_logits = next_token_logits / temperature
+                    # Top-p/top-k filtering
+                    next_token_logits = modeling_utils.top_k_top_p_filtering(next_token_logits, top_k=k, top_p=p)
+                    # Sample
+                    probs = F.softmax(next_token_logits, dim=-1)
+                    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+                else:
+                    # Greedy decoding
+                    next_tokens = torch.argmax(next_token_logits, dim=-1)
 
-            # either append a padding token here if <EOS> has been seen or append next token
-            tokens_to_add = next_tokens * eos_not_in_sents + self.tokenizer.pad_token_id * (1 - eos_not_in_sents)
+                # this updates which sentences have not seen an <EOS> token so far
+                # if one <EOS> token was seen the sentence is finished
+                eos_not_in_sents.mul_(next_tokens.ne(self.tokenizer.eos_token_id).long())
 
-            # Update input_ids, attn_mask and position_ids
-            input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
-            attn_mask = torch.cat([attn_mask, attn_mask.new_ones((batch_size, 1))], dim=1)
-            position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
+                # either append a padding token here if <EOS> has been seen or append next token
+                tokens_to_add = next_tokens * eos_not_in_sents + self.tokenizer.pad_token_id * (1 - eos_not_in_sents)
+
+                # Update input_ids, attn_mask and position_ids
+                input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
+                attn_mask = torch.cat([attn_mask, attn_mask.new_ones((batch_size, 1))], dim=1)
+                position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
         decoded_outputs = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                            for output in input_ids[:, input_seq_len:]]
