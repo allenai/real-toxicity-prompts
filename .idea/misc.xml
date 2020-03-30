@@ -3,5 +3,5 @@
   <component name="JavaScriptSettings">
     <option name="languageLevel" value="ES6" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.7 (lm-toxicity)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote Python 3.7.6 (sftp://sam@deepmemes.samgehman.com:22/home/sam/anaconda3/envs/lm-toxicity/bin/python)" project-jdk-type="Python SDK" />
 </project>

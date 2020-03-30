@@ -6,7 +6,7 @@
       <excludeFolder url="file://$MODULE_DIR$/output" />
       <excludeFolder url="file://$MODULE_DIR$/runs" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.7 (lm-toxicity)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Remote Python 3.7.6 (sftp://sam@deepmemes.samgehman.com:22/home/sam/anaconda3/envs/lm-toxicity/bin/python)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
