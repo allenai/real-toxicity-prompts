@@ -1,12 +1,8 @@
-from pathlib import Path
-from typing import Callable
-
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
+from transformers import GPT2LMHeadModel
 
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from utils import utils
 from utils.datasets import NUM_AFFECTS
 
 
@@ -23,17 +19,18 @@ class Affect(nn.Module):
     def __init__(self,
                  affect_dim: int,
                  vocab_size: int,
-                 beta: float = 1.0):
+                 beta: float = 1.0,
+                 hidden_dim=100):
         super().__init__()
         self.beta = beta
-        self.affect2vocab = nn.Linear(affect_dim, vocab_size)
+        self.affect2vocab = nn.Sequential(
+            nn.Linear(affect_dim, hidden_dim),
+            nn.Sigmoid(),
+            nn.Linear(hidden_dim, vocab_size)
+        )
 
     def forward(self, affect_labels: torch.Tensor) -> torch.Tensor:
         return self.beta * self.affect2vocab(affect_labels)
-
-    @classmethod
-    def from_pretrained(cls, path):
-        raise NotImplementedError
 
 
 class AffectGPT2LMHeadModel(GPT2LMHeadModel):
@@ -80,16 +77,3 @@ class AffectGPT2LMHeadModel(GPT2LMHeadModel):
             outputs = (loss,) + outputs
 
         return outputs  # (loss), logits, presents, (all hidden_states), (attentions)
-
-
-def test_affect_lm():
-    model_name = 'gpt2'
-    seed = 42
-    utils.set_seed(seed, n_gpu=0)
-
-    affect_lm = AffectGPT2LMHeadModel.from_pretrained(model_name)
-    affect_lm.affect = Affect(2, affect_lm.config.vocab_size)
-
-    tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-    encs = tokenizer.encode("I am a cool cat", return_tensors='pt')
-    affect_out = affect_lm(encs)[0]

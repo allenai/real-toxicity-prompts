@@ -34,6 +34,7 @@ import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data.dataloader import default_collate
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
@@ -246,18 +247,18 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
     def collate(examples: List[torch.Tensor]):
+        if args.model_type == 'affect-gpt2':
+            input_ids, affects = zip(*examples)
+            padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
+            return default_collate(list(zip(padded_ids, affects)))
+
         if tokenizer._pad_token is None:
             return pad_sequence(examples, batch_first=True)
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
-    if args.model_type == 'affect-gpt2':
-        collate_fn = None
-    else:
-        collate_fn = collate
-
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate_fn
+        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate
     )
 
     if args.max_steps > 0:
@@ -369,7 +370,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             if args.model_type == 'affect-gpt2':
                 batch, affects = batch
-                affects = affects.to(args.device)
+                affects = affects.unsqueeze(dim=1).to(args.device)
 
             inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
             inputs = inputs.to(args.device)
@@ -477,18 +478,18 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     # Note that DistributedSampler samples randomly
 
     def collate(examples: List[torch.Tensor]):
+        if args.model_type == 'affect-gpt2':
+            input_ids, affects = zip(*examples)
+            padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
+            return default_collate(list(zip(padded_ids, affects)))
+
         if tokenizer._pad_token is None:
             return pad_sequence(examples, batch_first=True)
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
-    if args.model_type == 'affect-gpt2':
-        collate_fn = None
-    else:
-        collate_fn = collate
-
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(
-        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate_fn
+        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate
     )
 
     # multi-gpu evaluate
@@ -506,7 +507,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         if args.model_type == 'affect-gpt2':
             batch, affects = batch
-            affects = affects.to(args.device)
+            affects = affects.unsqueeze(dim=1).to(args.device)
 
         inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
         inputs = inputs.to(args.device)

@@ -58,8 +58,8 @@ class AffectDataset(Dataset):
             for row in rows:
                 # Load text and tokenize
                 text_file = TEXTS_DIR / row.filename
-                text = text_file.read_text(encoding='utf-8')
-                tokens = tokenizer.encode(text, max_length=block_size, pad_to_max_length=True, return_tensors='pt')
+                text = text_file.read_text(encoding='utf-8', errors='replace')[row.begin:row.end]
+                tokens = tokenizer.encode(text, max_length=block_size, return_tensors='pt').squeeze()
 
                 # Create affect vector from row
                 affect = create_affect_vector(
@@ -75,9 +75,9 @@ class AffectDataset(Dataset):
 
                 self.examples.append((tokenizer.build_inputs_with_special_tokens(tokens), affect))
 
-                logger.info("Saving features into cached file %s", cached_features_file)
-                with cached_features_file.open('wb') as handle:
-                    pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            logger.info("Saving features into cached file %s", cached_features_file)
+            with cached_features_file.open('wb') as handle:
+                pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
         return len(self.examples)
