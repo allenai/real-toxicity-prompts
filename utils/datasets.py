@@ -1,8 +1,10 @@
 import logging
 import pickle
 from pathlib import Path
+from typing import List
 
 import pandas as pd
+import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
 from sqlalchemy.orm import sessionmaker
@@ -26,8 +28,8 @@ def create_affect_vector(toxicity: float = 0.,
                          threat: float = 0.,
                          profanity: float = 0.,
                          sexually_explicit: float = 0.,
-                         flirtation: float = 0.) -> torch.Tensor:
-    return torch.tensor([
+                         flirtation: float = 0.) -> List[float]:
+    return [
         insult,
         severe_toxicity,
         toxicity,
@@ -36,7 +38,7 @@ def create_affect_vector(toxicity: float = 0.,
         flirtation,
         identity_attack,
         threat
-    ])
+    ]
 
 
 class AffectDataset(Dataset):
@@ -81,7 +83,8 @@ class AffectDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, item):
-        return self.examples[item]
+        input_ids, affect = self.examples[item]
+        return torch.tensor(input_ids, dtype=torch.long), torch.tensor(affect, dtype=torch.float)
 
     @staticmethod
     def create_examples(df: pd.DataFrame, tokenizer: PreTrainedTokenizer, block_size: int):
@@ -90,7 +93,7 @@ class AffectDataset(Dataset):
             # Load text and tokenize
             text_file = TEXTS_DIR / row.filename
             text = text_file.read_text(encoding='utf-8', errors='replace')[row.begin:row.end].strip()
-            tokens = tokenizer.encode(text, max_length=block_size, return_tensors='pt').squeeze()
+            tokens = tokenizer.encode(text, max_length=block_size)
 
             # Create affect vector from row
             affect = create_affect_vector(
@@ -102,14 +105,15 @@ class AffectDataset(Dataset):
                 row.profanity,
                 row.sexually_explicit,
                 row.flirtation
-            ).round()
+            )
+            affect = np.array(affect).round().astype(int).tolist()
 
-            examples.append((tokenizer.build_inputs_with_special_tokens(tokens), affect))
+            examples.append((tokens, affect))
 
         return examples
 
     @staticmethod
-    def load_perspective_rows(limit_rows=100_000) -> pd.DataFrame:
+    def load_perspective_rows(limit_rows=10_000) -> pd.DataFrame:
         logger.info(f"Querying {limit_rows} rows from perspective database")
 
         session = perspective_db_session()
