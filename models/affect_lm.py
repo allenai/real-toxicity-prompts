@@ -38,6 +38,10 @@ class AffectGPT2LMHeadModel(GPT2LMHeadModel):
         super().__init__(config)
         self.affect = Affect(NUM_AFFECTS, config.vocab_size)
 
+    def freeze_transformer(self):
+        for p in self.transformer.parameters():
+            p.requires_grad = False
+
     def forward(
             self,
             input_ids=None,

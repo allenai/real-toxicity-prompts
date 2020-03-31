@@ -113,10 +113,11 @@ class AffectDataset(Dataset):
         return examples
 
     @staticmethod
-    def load_perspective_rows(limit_rows=10_000) -> pd.DataFrame:
+    def load_perspective_rows(limit_rows=100_000) -> pd.DataFrame:
         logger.info(f"Querying {limit_rows} rows from perspective database")
 
         session = perspective_db_session()
+
         low_tox_query = session.query(SpanScore). \
             order_by(SpanScore.toxicity). \
             limit(limit_rows // 2)
