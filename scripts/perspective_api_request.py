@@ -2,7 +2,7 @@ import csv
 import json
 import time
 from pathlib import Path
-from typing import List, Union, Optional, Iterable, Tuple
+from typing import List, Union, Optional, Iterable, Tuple, Dict
 
 import click
 from googleapiclient import discovery
@@ -16,10 +16,6 @@ def perspective_service(api_key: str):
     return discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
 
 
-_SERVICE = perspective_service(PERSPECTIVE_API_KEY) if PERSPECTIVE_API_KEY else None
-_last_request = 0
-
-
 def perspective_request(text: str, service):
     analyze_request = {
         'comment': {'text': text},
@@ -29,8 +25,8 @@ def perspective_request(text: str, service):
     return service.comments().analyze(body=analyze_request)
 
 
-def response_path(response_dir: Path, id_: str) -> Path:
-    return response_dir / (id_ + ".json")
+# def response_path(response_dir: Path, id_: str) -> Path:
+#     return response_dir / (id_ + ".json")
 
 
 def log_failure(failures_file: Optional[Path], id_: str, message: str = None):
@@ -43,7 +39,7 @@ def log_failure(failures_file: Optional[Path], id_: str, message: str = None):
         writer.writerow(row)
 
 
-def load_batches(docs: Union[List[Path], List[str]], batch_size: int):
+def load_batches(docs: Union[List[Path], List[str]], batch_size: int) -> Iterable[Tuple[str, str]]:
     assert batch_size > 0
 
     batch = []
@@ -68,90 +64,70 @@ def load_batches(docs: Union[List[Path], List[str]], batch_size: int):
         yield batch
 
 
-def request_batch(batch: Union[Iterable[str], Iterable[Tuple[str, str]]],
-                  service=_SERVICE) -> Iterable[Tuple[str, Optional[dict], Optional[str]]]:
-    # Rate limit to 1 batch request per second
-    global _last_request
-    now = time.time()
-    request_time = now - _last_request
-    if request_time < 1:
-        time.sleep(1 - request_time)
-    _last_request = now
-
-    request_ids: List[str] = []
-    responses: List[Optional[dict]] = []
-    exceptions: List[Optional[str]] = []
+def request_batch(batch: Iterable[Tuple[str, str]], service) -> Dict[str, Tuple[Optional[dict], Optional[str]]]:
+    responses = {}
 
     def response_callback(request_id, response, exception):
-        nonlocal request_ids
         nonlocal responses
-        nonlocal exceptions
+        responses[request_id] = (response, exception)
 
-        request_ids.append(request_id)
-        responses.append(response)
-        exceptions.append(exception)
-
-    # Create batch request
+    # Create batch
     batch_request = service.new_batch_http_request()
     for request_id, text in batch:
         if len(text) > PERSPECTIVE_API_LEN_LIMIT:
-            responses.append(None)
-            exceptions.append(
-                f'{request_id}: document length was {len(text)}, limit is {PERSPECTIVE_API_LEN_LIMIT}'
+            responses[request_id] = (
+                None, f'{request_id}: document length was {len(text)}, limit is {PERSPECTIVE_API_LEN_LIMIT}'
             )
             continue
 
         batch_request.add(perspective_request(text, service), callback=response_callback, request_id=request_id)
 
-    # Make request
-    try:
-        batch_request.execute()
-    except Exception as e:
-        for request_id, _ in batch:
-            responses.append(None)
-            exceptions.append(str(e))
-
-    return zip(request_ids, responses, exceptions)
+    # Make API request
+    batch_request.execute()
+    return responses
 
 
 def request(corpus: Union[List[Path], List[str]],
-            api_key: str,
-            requests_per_second: int,
             responses_file: Optional[Path] = None,
-            failures_file: Optional[Path] = None) -> Optional[List[dict]]:
+            failures_file: Optional[Path] = None,
+            api_key: str = PERSPECTIVE_API_KEY,
+            requests_per_second: int = 25) -> List[dict]:
     # Generate API client object dynamically based on service name and version
     service = discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
 
-    num_failures = 0
-    responses: List[dict] = []
+    last_request = -1  # satisfies initial condition
+    responses: List[Optional[dict]] = []
 
     pbar = tqdm(total=len(corpus))
     for batch in load_batches(corpus, requests_per_second):
-        for request_id, response, exception in request_batch(batch, service):
+        # Rate limit to 1 batch request per second
+        now = time.time()
+        request_time = now - last_request
+        if request_time < 1:
+            time.sleep(1 - request_time)
+        last_request = now
+
+        batch_responses = request_batch(batch, service)
+        for request_id, _ in batch:
+            response, exception = batch_responses[request_id]
+
             # Handle exception
             if exception:
-                if failures_file:
-                    log_failure(failures_file, request_id, str(exception))
-                num_failures += 1
-                continue
+                log_failure(failures_file, request_id, str(exception))
+                assert not response
 
             # Save response
+            responses.append(response)
             if responses_file:
                 try:
-                    with response_path(responses_file, request_id).open('w') as f:
+                    with responses_file.open('a') as f:
                         print(json.dumps(response), file=f)
                 except OSError as e:
-                    tqdm.write(f'Error while saving response for {request_id}: {e}')
-            else:
-                responses.append(response)
+                    log_failure(failures_file, request_id, f'Error saving file: {str(e)}')
 
-        # Update progress bar
-        pbar.set_description(f"Failures: {num_failures}")
         pbar.update(requests_per_second)
 
-    # Return list of responses if no directory is specified
-    if not responses_file:
-        return responses
+    return responses
 
 
 @click.command()
@@ -182,7 +158,8 @@ def main(corpus, responses_file, failures_file, api_key, requests_per_second):
 
     # Make requests
     tqdm.write("Requesting from Perspective API...")
-    request(corpus, api_key, requests_per_second, responses_file=responses_file, failures_file=failures_file)
+    request(corpus, responses_file=responses_file, failures_file=failures_file, api_key=api_key,
+            requests_per_second=requests_per_second)
 
 
 if __name__ == '__main__':

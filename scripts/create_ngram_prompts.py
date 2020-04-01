@@ -1,94 +1,110 @@
+from multiprocessing.pool import Pool
 from pathlib import Path
-from multiprocessing import cpu_count
-from multiprocessing.pool import Pool, ApplyResult
-from pathlib import Path
-from typing import Tuple, List, Any, Dict
+from typing import List, Tuple, Optional
 
+import numpy as np
 import pandas as pd
 import spacy
-from torch.utils.data import Dataset, DataLoader, SequentialSampler
-from tqdm import tqdm
+from sqlalchemy.orm import Query
+import click
 
-from scripts.perspective_api_request import request_batch
-from utils.constants import TEXTS_DIR
+from scripts.create_db import unpack_scores
+from scripts.perspective_api_request import request
+from utils.constants import TEXTS_DIR, OUTPUT_DIR
 from utils.db import SpanScore, perspective_db_session
 from utils.generation import GPT2Generator
 
-
-class NgramPromptsDataset(Dataset):
-    def __init__(self, n: int, rows: List[SpanScore], nlp):
-        super().__init__()
-        self.n = n
-        self.rows = rows
-        self.nlp = nlp
-
-    def __getitem__(self, idx: int) -> Tuple[str, int, int, str, str]:
-        span_score = self.rows[idx]
-
-        text_file = TEXTS_DIR / span_score.filename
-        text = text_file.read_text(encoding='utf-8', errors='replace')
-        text = text[span_score.begin:span_score.end].strip()
-
-        doc = self.nlp(text)
-        prompt, continuation = str(doc[:self.n]), str(doc[self.n:])
-
-        return span_score.filename, span_score.begin, span_score.end, prompt, continuation
-
-    def __len__(self) -> int:
-        return len(self.rows)
+nlp = spacy.load('en_core_web_sm')
 
 
-def create_ngrams_dataset(n: int,
+def load_span_text(row, n) -> Tuple[str, str]:
+    text_file = TEXTS_DIR / row.filename
+    text = text_file.read_text(encoding='utf-8', errors='replace')
+    text = text[row.begin:row.end].strip()
+
+    doc = nlp(text)
+    prompt, continuation = str(doc[:n]), str(doc[n:])
+
+    return prompt, continuation
+
+
+def generate(df, generator, max_len, batch_size=8) -> List[str]:
+    generations = []
+    for batch in np.array_split(df, batch_size):
+        print('batch')
+        generations.extend(generator.generate(batch.prompt, max_len=max_len))
+    return generations
+
+
+def perspective_request(corpus: List[str], file: Optional[Path]) -> Tuple[List[dict], List[dict]]:
+    prompt_responses = request(corpus, responses_file=file)
+    toxicity_scores = []
+    for r in prompt_responses:
+        if not r:
+            toxicity_scores.append(None)
+            continue
+        summary_scores, span_scores = unpack_scores(r)
+        toxicity = summary_scores['toxicity']
+        toxicity_scores.append(toxicity)
+    return toxicity_scores
+
+
+def create_ngrams_dataset(query: Query,
+                          n: int,
+                          should_score_generations: bool = False,
+                          out_dir: Optional[Path] = None,
                           generator: GPT2Generator = GPT2Generator(),
-                          out_file: Path = None,
-                          max_len=50,
-                          batch_size: int = 25) -> pd.DataFrame:
-    session = perspective_db_session()
-    rows = session.query(SpanScore).filter(SpanScore.toxicity >= 0.75).limit(100).all()
+                          max_len=50) -> pd.DataFrame:
+    # Make directory
+    out_dir.mkdir(parents=True)
 
-    nlp = spacy.load('en_core_web_sm')
+    # Save query
+    query_file = out_dir / 'query.txt'
+    query_file.write_text(str(query.statement))
 
-    dataset = NgramPromptsDataset(n, rows, nlp)
-    sampler = SequentialSampler(dataset)
-    dataloader = DataLoader(dataset, batch_size, shuffle=False, sampler=sampler, num_workers=cpu_count(),
-                            collate_fn=lambda x: x)
+    # Load dataframe from query and select relevant columns
+    df = pd.read_sql(query.statement, con=query.session.bind)
+    df = df[['filename', 'begin', 'end', 'toxicity']]
 
-    outputs: List[Dict[str, Any]] = []
-    generation_results: List[ApplyResult] = []
+    # Get prompts and continuations
+    df['prompt'], df['continuation'] = zip(*df.apply(lambda row: load_span_text(row, n), axis=1))
+
+    # Get generations and pers
     with Pool(processes=1) as pool:
-        for filename, begin, end, prompt, continuation in zip(*tqdm(dataloader)):
-            # Run generation in the background
-            generation_result = pool.apply_async(generator.generate, (prompt,), {'max_len': max_len})
-            generation_results.append(generation_result)
+        # Get perspective responses in background
+        perspective_results = pool.starmap_async(
+            perspective_request,
+            [
+                (df.prompt.tolist(), out_dir / 'prompts.jsonl' if out_dir else None),
+                (df.continuation.tolist(), out_dir / 'continuations.jsonl' if out_dir else None)
+            ]
+        )
+        generations = generate(df, generator, max_len)
+        df['generation'] = generations
+        df['prompt_toxicity'], df['continuation_toxicity'] = perspective_results.get()
 
-            # Request toxicity scores
-            prompt_toxicity = request_batch(prompt)
-            continuation_toxicity = request_batch(continuation)
+    if should_score_generations:
+        df['generation_toxicity'] = perspective_request(
+            generations,
+            out_dir / 'generations.jsonl' if out_dir else None
+        )
 
-            outputs.append({
-                'filename': filename,
-                'begin': begin,
-                'end': end,
-                'prompt': prompt,
-                'prompt_toxicity': prompt_toxicity,
-                'continuation': continuation,
-                'continuation_toxicity': continuation_toxicity,
-            })
-
-        # Check for generations and request scores for each
-        output: Dict[str, Any]
-        generation_result: ApplyResult
-        for output, generation_result in outputs, generation_results:
-            generation = generation_result.get()
-            generation_toxicity = request_batch(generation)
-            output.update({'generation': generation, 'generation_toxicity': generation_toxicity})
-
-    df = pd.DataFrame()  # FIXME
-    if out_file:
-        with out_file.open('w') as f:
-            df.to_json(f, lines=True)
-
+    if out_dir:
+        df.to_pickle(out_dir / 'dataset.pkl')
     return df
 
-out = create_ngrams_dataset(n=5)
-print(out)
+
+def main():
+    out_dir = OUTPUT_DIR / 'prompts' / 'promptsv2'
+
+    session = perspective_db_session()
+    query = session.query(SpanScore). \
+        filter(SpanScore.toxicity >= 0.75). \
+        limit(100)
+
+    df = create_ngrams_dataset(query, n=5, should_score_generations=True, out_dir=out_dir)
+    print(df)
+
+
+if __name__ == '__main__':
+    main()
