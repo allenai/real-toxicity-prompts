@@ -12,6 +12,7 @@ dependencies:
       - git+git://github.com/thesamuel/transformers@language-model-toxicity
 
   - click
+  - dask
   - jupyterlab
   - matplotlib
   - numpy
