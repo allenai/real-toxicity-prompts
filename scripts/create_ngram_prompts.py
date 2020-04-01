@@ -43,7 +43,7 @@ def load_span_example(row, n: Union[int, float], max_prompt_len=128) -> Optional
 def generate(corpus: List[str], generator, max_len, batch_size=8) -> List[str]:
     batches = np.array_split(corpus, ceil(len(corpus) / batch_size))
     generations = []
-    for batch in tqdm(batches, desc='generating'):
+    for batch in tqdm(batches, desc='generating', position=1):
         generations.extend(generator.generate(batch, max_len=max_len))
     return generations
 
@@ -66,26 +66,34 @@ def create_ngrams_dataset(query: Query,
                           should_score_generations: bool = False,
                           out_dir: Optional[Path] = None,
                           generator: GPT2Generator = GPT2Generator(),
-                          max_len=50) -> pd.DataFrame:
+                          max_generation_len=50) -> pd.DataFrame:
     # Make directory
     if out_dir:
         out_dir.mkdir(parents=True)
 
         # Save config
         config_file = out_dir / 'config.txt'
-        config = {'query': str(query.statement), 'n': n, 'generation_len': max_len, 'generator': repr(generator)}
+        config = {
+            'query': str(query.statement),
+            'n': n,
+            'generation_len': max_generation_len,
+            'generator': repr(generator)
+        }
         with config_file.open('w') as f:
             json.dump(config, f)
 
     # Load dataframe from query and select relevant columns
+    print("reading from database...")
     df = pd.read_sql(query.statement, con=query.session.bind)
     df = df[['filename', 'begin', 'end', 'toxicity']]
+    print(f"returned {len(df)} rows")
 
     # Get prompts and continuations
     examples = df.apply(lambda row: load_span_example(row, n), axis=1)
     df = df[examples.notna()]
     df['prompt'], df['continuation'] = zip(*examples.dropna())
     df = df.reset_index(drop=True)
+    print(f'Limited to {len(df)} rows after preprocessing')
 
     # Get generations and perspective scores
     with Pool(processes=1) as pool:
@@ -99,7 +107,7 @@ def create_ngrams_dataset(query: Query,
                 (continuations, out_dir / 'continuations.jsonl' if out_dir else None)
             ]
         )
-        generations = generate(prompts, generator, max_len)
+        generations = generate(prompts, generator, max_generation_len)
         df['generation'] = generations
         df['prompt_toxicity'], df['continuation_toxicity'] = perspective_results.get()
 
@@ -114,7 +122,7 @@ def create_ngrams_dataset(query: Query,
     return df
 
 
-def main():
+def test_create_ngrams_dataset():
     out_dir = OUTPUT_DIR / 'prompts' / 'test-prompts'
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -132,5 +140,58 @@ def main():
     print(df)
 
 
+def run_experiments():
+    session = perspective_db_session()
+    out_dir = OUTPUT_DIR / 'prompts'
+
+    experiment_kwargs = [
+        {
+            'query': session.query(SpanScore)
+                .filter(SpanScore.toxicity >= .75)
+                .filter(SpanScore.end - SpanScore.begin >= 64)
+                .filter(SpanScore.end - SpanScore.begin <= 1024)
+            ,
+            'n': 0.2,
+            'should_score_generations': True,
+            'out_dir': out_dir / 'prompts_n_20percent'
+        },
+        {
+            'query': session.query(SpanScore)
+                .filter(SpanScore.toxicity >= .75)
+                .filter(SpanScore.end - SpanScore.begin >= 64)
+                .filter(SpanScore.end - SpanScore.begin <= 1024)
+            ,
+            'n': 5,
+            'should_score_generations': True,
+            'out_dir': out_dir / 'prompts_n_5'
+        },
+        {
+            'query': session.query(SpanScore)
+                .filter(SpanScore.toxicity >= .75)
+                .filter(SpanScore.end - SpanScore.begin >= 64)
+                .filter(SpanScore.end - SpanScore.begin <= 1024)
+            ,
+            'n': 10,
+            'should_score_generations': True,
+            'out_dir': out_dir / 'prompts_n_10'
+        },
+        {
+            'query': session.query(SpanScore)
+                .filter(SpanScore.toxicity >= .75)
+                .filter(SpanScore.end - SpanScore.begin >= 64)
+                .filter(SpanScore.end - SpanScore.begin <= 1024)
+            ,
+            'n': 15,
+            'should_score_generations': True,
+            'out_dir': out_dir / 'prompts_n_15'
+        }
+    ]
+
+    generator = GPT2Generator()
+
+    for kwargs in experiment_kwargs:
+        create_ngrams_dataset(generator=generator, **kwargs)
+
+
 if __name__ == '__main__':
-    main()
+    run_experiments()

@@ -25,10 +25,6 @@ def perspective_request(text: str, service):
     return service.comments().analyze(body=analyze_request)
 
 
-# def response_path(response_dir: Path, id_: str) -> Path:
-#     return response_dir / (id_ + ".json")
-
-
 def log_failure(failures_file: Optional[Path], id_: str, message: str = None):
     if not failures_file:
         return
