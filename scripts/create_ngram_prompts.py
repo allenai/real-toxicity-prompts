@@ -1,3 +1,6 @@
+import json
+import shutil
+from math import ceil
 from multiprocessing.pool import Pool
 from pathlib import Path
 from typing import List, Tuple, Optional, Union
@@ -6,6 +9,7 @@ import numpy as np
 import pandas as pd
 import spacy
 from sqlalchemy.orm import Query
+from tqdm.auto import tqdm
 
 from scripts.create_db import unpack_scores
 from scripts.perspective_api_request import request
@@ -24,17 +28,17 @@ def load_span_example(row, n: Union[int, float]) -> Tuple[str, str]:
     doc = nlp(text)
 
     if isinstance(n, float):
-        n = int(n * len(text))
+        n = int(n * len(doc))
     prompt, continuation = str(doc[:n]), str(doc[n:])
 
     return prompt, continuation
 
 
-def generate(df, generator, max_len, batch_size=8) -> List[str]:
+def generate(corpus: List[str], generator, max_len, batch_size=8) -> List[str]:
+    batches = np.array_split(corpus, ceil(len(corpus) / batch_size))
     generations = []
-    for batch in np.array_split(df, batch_size):
-        print('batch')
-        generations.extend(generator.generate(batch.prompt, max_len=max_len))
+    for batch in tqdm(batches, desc='generating'):
+        generations.extend(generator.generate(batch, max_len=max_len))
     return generations
 
 
@@ -58,11 +62,14 @@ def create_ngrams_dataset(query: Query,
                           generator: GPT2Generator = GPT2Generator(),
                           max_len=50) -> pd.DataFrame:
     # Make directory
-    out_dir.mkdir(parents=True)
+    if out_dir:
+        out_dir.mkdir(parents=True)
 
-    # Save query
-    query_file = out_dir / 'query.txt'
-    query_file.write_text(str(query.statement))
+        # Save config
+        config_file = out_dir / 'config.txt'
+        config = {'query': str(query.statement), 'n': n, 'generation_len': max_len, 'generator': repr(generator)}
+        with config_file.open('w') as f:
+            json.dump(config, f)
 
     # Load dataframe from query and select relevant columns
     df = pd.read_sql(query.statement, con=query.session.bind)
@@ -71,17 +78,19 @@ def create_ngrams_dataset(query: Query,
     # Get prompts and continuations
     df['prompt'], df['continuation'] = zip(*df.apply(lambda row: load_span_example(row, n), axis=1))
 
-    # Get generations and pers
+    # Get generations and perspective scores
     with Pool(processes=1) as pool:
+        prompts, continuations = df.prompt.tolist(), df.continuation.tolist()
+
         # Get perspective responses in background
         perspective_results = pool.starmap_async(
             perspective_request,
             [
-                (df.prompt.tolist(), out_dir / 'prompts.jsonl' if out_dir else None),
-                (df.continuation.tolist(), out_dir / 'continuations.jsonl' if out_dir else None)
+                (prompts, out_dir / 'prompts.jsonl' if out_dir else None),
+                (continuations, out_dir / 'continuations.jsonl' if out_dir else None)
             ]
         )
-        generations = generate(df, generator, max_len)
+        generations = generate(prompts, generator, max_len)
         df['generation'] = generations
         df['prompt_toxicity'], df['continuation_toxicity'] = perspective_results.get()
 
@@ -97,14 +106,19 @@ def create_ngrams_dataset(query: Query,
 
 
 def main():
-    out_dir = OUTPUT_DIR / 'prompts' / 'promptsv2'
+    out_dir = OUTPUT_DIR / 'prompts' / 'test-prompts'
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
 
     session = perspective_db_session()
-    query = session.query(SpanScore). \
-        filter(SpanScore.toxicity >= 0.75). \
-        limit(100)
+    query = (
+        session.query(SpanScore)
+            .filter(SpanScore.toxicity >= .75)
+            .filter(SpanScore.end - SpanScore.begin <= 1024)
+            .limit(1000)
+    )
 
-    df = create_ngrams_dataset(query, n=.2, should_score_generations=True, out_dir=out_dir)
+    df = create_ngrams_dataset(query, n=.2, should_score_generations=False, out_dir=out_dir)
     print(df)
 
 
