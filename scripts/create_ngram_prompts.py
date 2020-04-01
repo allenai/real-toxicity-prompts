@@ -1,12 +1,11 @@
 from multiprocessing.pool import Pool
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union
 
 import numpy as np
 import pandas as pd
 import spacy
 from sqlalchemy.orm import Query
-import click
 
 from scripts.create_db import unpack_scores
 from scripts.perspective_api_request import request
@@ -17,12 +16,15 @@ from utils.generation import GPT2Generator
 nlp = spacy.load('en_core_web_sm')
 
 
-def load_span_text(row, n) -> Tuple[str, str]:
+def load_span_example(row, n: Union[int, float]) -> Tuple[str, str]:
     text_file = TEXTS_DIR / row.filename
     text = text_file.read_text(encoding='utf-8', errors='replace')
     text = text[row.begin:row.end].strip()
 
     doc = nlp(text)
+
+    if isinstance(n, float):
+        n = int(n * len(text))
     prompt, continuation = str(doc[:n]), str(doc[n:])
 
     return prompt, continuation
@@ -36,7 +38,7 @@ def generate(df, generator, max_len, batch_size=8) -> List[str]:
     return generations
 
 
-def perspective_request(corpus: List[str], file: Optional[Path]) -> Tuple[List[dict], List[dict]]:
+def perspective_request(corpus: List[str], file: Optional[Path]) -> List[dict]:
     prompt_responses = request(corpus, responses_file=file)
     toxicity_scores = []
     for r in prompt_responses:
@@ -50,7 +52,7 @@ def perspective_request(corpus: List[str], file: Optional[Path]) -> Tuple[List[d
 
 
 def create_ngrams_dataset(query: Query,
-                          n: int,
+                          n: Union[int, float],
                           should_score_generations: bool = False,
                           out_dir: Optional[Path] = None,
                           generator: GPT2Generator = GPT2Generator(),
@@ -67,7 +69,7 @@ def create_ngrams_dataset(query: Query,
     df = df[['filename', 'begin', 'end', 'toxicity']]
 
     # Get prompts and continuations
-    df['prompt'], df['continuation'] = zip(*df.apply(lambda row: load_span_text(row, n), axis=1))
+    df['prompt'], df['continuation'] = zip(*df.apply(lambda row: load_span_example(row, n), axis=1))
 
     # Get generations and pers
     with Pool(processes=1) as pool:
@@ -102,7 +104,7 @@ def main():
         filter(SpanScore.toxicity >= 0.75). \
         limit(100)
 
-    df = create_ngrams_dataset(query, n=5, should_score_generations=True, out_dir=out_dir)
+    df = create_ngrams_dataset(query, n=.2, should_score_generations=True, out_dir=out_dir)
     print(df)
 
 
