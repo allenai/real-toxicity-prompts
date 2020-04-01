@@ -20,16 +20,22 @@ from utils.generation import GPT2Generator
 nlp = spacy.load('en_core_web_sm')
 
 
-def load_span_example(row, n: Union[int, float]) -> Tuple[str, str]:
+def load_span_example(row, n: Union[int, float], max_prompt_len=128) -> Optional[Tuple[str, str]]:
     text_file = TEXTS_DIR / row.filename
-    text = text_file.read_text(encoding='utf-8', errors='replace')
-    text = text[row.begin:row.end].strip()
+    try:
+        text = text_file.read_text(encoding='utf-8', errors='strict')
+    except UnicodeDecodeError:
+        return None
 
+    text = text[row.begin:row.end].strip()
     doc = nlp(text)
 
     if isinstance(n, float):
         n = int(n * len(doc))
     prompt, continuation = str(doc[:n]), str(doc[n:])
+
+    if len(prompt) == 0 or len(continuation) == 0 or len(prompt) > max_prompt_len:
+        return None
 
     return prompt, continuation
 
@@ -76,7 +82,10 @@ def create_ngrams_dataset(query: Query,
     df = df[['filename', 'begin', 'end', 'toxicity']]
 
     # Get prompts and continuations
-    df['prompt'], df['continuation'] = zip(*df.apply(lambda row: load_span_example(row, n), axis=1))
+    examples = df.apply(lambda row: load_span_example(row, n), axis=1)
+    df = df[examples.notna()]
+    df['prompt'], df['continuation'] = zip(*examples.dropna())
+    df = df.reset_index(drop=True)
 
     # Get generations and perspective scores
     with Pool(processes=1) as pool:
@@ -114,6 +123,7 @@ def main():
     query = (
         session.query(SpanScore)
             .filter(SpanScore.toxicity >= .75)
+            .filter(SpanScore.end - SpanScore.begin >= 128)
             .filter(SpanScore.end - SpanScore.begin <= 1024)
             .limit(1000)
     )
