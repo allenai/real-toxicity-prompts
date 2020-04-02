@@ -53,7 +53,7 @@ def load_span_example(row, n: Union[int, float]) -> Optional[Tuple[str, str]]:
 def generate(corpus: List[str], generator, max_len, batch_size=8) -> List[str]:
     batches = np.array_split(corpus, ceil(len(corpus) / batch_size))
     generations = []
-    for batch in tqdm(batches, desc='generating', position=1):
+    for batch in tqdm(batches, desc='generating', position=1, dynamic_ncols=True):
         generations.extend(generator.generate(batch, max_len=max_len))
     return generations
 

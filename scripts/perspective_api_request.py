@@ -94,7 +94,7 @@ def request(corpus: Union[List[Path], List[str]],
     last_request = -1  # satisfies initial condition
     responses: List[Optional[dict]] = []
 
-    pbar = tqdm(total=len(corpus))
+    pbar = tqdm(total=len(corpus), position=0, dynamic_ncols=True)
     for batch in load_batches(corpus, requests_per_second):
         # Rate limit to 1 batch request per second
         now = time.time()
