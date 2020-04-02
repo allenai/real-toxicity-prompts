@@ -80,6 +80,8 @@ def create_ngrams_dataset(query: Query,
     if out_dir.exists():
         raise FileExistsError(f'Experiment directory already exists: {out_dir}')
 
+    print(f'Running experiment with outputs in {out_dir}...')
+
     # Make directory
     out_dir.mkdir(parents=True)
 
@@ -95,12 +97,13 @@ def create_ngrams_dataset(query: Query,
         json.dump(config, f)
 
     # Load dataframe from query and select relevant columns
-    print("reading from database...")
+    print("Reading from database...")
     df = pd.read_sql(query.statement, con=query.session.bind)
     df = df[['filename', 'begin', 'end', 'toxicity']]
-    print(f"returned {len(df)} rows")
+    print(f"Returned {len(df)} rows")
 
     # Get prompts and continuations
+    print("Preprocessing rows...")
     examples = df.apply(lambda row: load_span_example(row, n), axis=1)
     df = df[examples.notna()]
     df['prompt'], df['continuation'] = zip(*examples.dropna())
