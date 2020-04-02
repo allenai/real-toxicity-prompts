@@ -5,7 +5,7 @@ from utils.constants import OUTPUT_DIR, PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.datasets import create_affect_vector
 from models.affect_lm import AffectGPT2LMHeadModel
 
-model_dir = OUTPUT_DIR / 'affect' / 'affectv2' / 'finetune_output'
+model_dir = OUTPUT_DIR / 'affect' / 'affect_100k_frozen' / 'finetune_output'
 model = AffectGPT2LMHeadModel.from_pretrained(model_dir)
 model.affect.beta = 1
 
@@ -16,7 +16,7 @@ affects = [create_affect_vector(**{attribute: 1}) for attribute in PERSPECTIVE_A
 affects.append(create_affect_vector())
 affects = torch.tensor(affects).unsqueeze(dim=1).to(device)
 
-prompt = "Hello there I am a"
+prompt = GPT2Generator.STOP_TOKEN
 out = generator([prompt] * len(affects), max_len=200, affect_labels=affects)
 
 for attribute, gen in zip(PERSPECTIVE_API_ATTRIBUTES_LOWER + ('neutral',), out):

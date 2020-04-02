@@ -42,6 +42,8 @@ class GPT2Generator:
         self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer, pad_token=self.STOP_TOKEN)
         assert self.tokenizer.eos_token == self.tokenizer.pad_token
 
+        self.unpadded_tokenizer = GPT2Tokenizer.from_pretrained(tokenizer)
+
     def __repr__(self):
         return f'<GPT2Generator model_name_or_path="{self.model}">'
 
@@ -59,13 +61,20 @@ class GPT2Generator:
         if isinstance(prompt, str):
             prompt = [prompt]
 
-        encodings_dict = self.tokenizer.batch_encode_plus(prompt, pad_to_max_length=True, return_tensors='pt')
+        if prompt[0] == self.STOP_TOKEN:
+            print("Tokenizing without padding because first prompt was EOS. Assuming all prompts are EOS.")
+            encodings_dict = self.unpadded_tokenizer.batch_encode_plus(prompt, return_tensors='pt')
+        else:
+            encodings_dict = self.tokenizer.batch_encode_plus(prompt, pad_to_max_length=True, return_tensors='pt')
 
         input_ids = encodings_dict['input_ids'].to(self.device)
         attn_mask = encodings_dict['attention_mask'].to(self.device)
         batch_size, input_seq_len = input_ids.shape
 
-        position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
+        if prompt[0] == self.STOP_TOKEN:
+            position_ids = None
+        else:
+            position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
         eos_not_in_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
         # TODO: use this to speed up generation
@@ -108,7 +117,8 @@ class GPT2Generator:
                 # Update input_ids, attn_mask and position_ids
                 input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
                 attn_mask = torch.cat([attn_mask, attn_mask.new_ones((batch_size, 1))], dim=1)
-                position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
+                if prompt[0] != self.STOP_TOKEN:
+                    position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
         decoded_outputs = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                            for output in input_ids[:, input_seq_len:]]
