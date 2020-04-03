@@ -1,5 +1,4 @@
 import pickle
-from math import ceil
 from multiprocessing.pool import Pool
 
 import pandas as pd
@@ -12,7 +11,6 @@ from utils.db import perspective_db_engine
 nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner', 'tagger'])
 
 CHUNK_SIZE = 100
-NUM_ROWS = 76_221_963
 NUM_WORKERS = 4
 
 
@@ -45,8 +43,7 @@ def span_generator():
 ngram_counts = []
 g = span_generator()
 with Pool(processes=NUM_WORKERS) as pool:
-    for out in tqdm(pool.imap_unordered(count_ngrams, g, chunksize=CHUNK_SIZE),
-                    total=ceil(NUM_ROWS / CHUNK_SIZE)):
+    for out in tqdm(pool.imap_unordered(count_ngrams, g, chunksize=CHUNK_SIZE)):
         ngram_counts.extend(out)
 
 with open(OUTPUT_DIR / 'ngram_counts.pkl', 'wb') as f:
