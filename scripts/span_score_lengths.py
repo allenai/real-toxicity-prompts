@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 from utils.constants import TEXTS_DIR, OUTPUT_DIR
 from utils.db import perspective_db_engine
 
-nlp = spacy.load('en_core_web_sm')
+nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner', 'tagger'])
 
 CHUNK_SIZE = 100
 NUM_ROWS = 76_221_963

@@ -17,7 +17,7 @@ from utils.constants import TEXTS_DIR, OUTPUT_DIR
 from utils.db import SpanScore, perspective_db_session
 from utils.generation import GPT2Generator
 
-nlp = spacy.load('en_core_web_sm')
+nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner', 'tagger'])
 
 MIN_SPAN_LEN = 64
 MAX_SPAN_LEN = 1024
