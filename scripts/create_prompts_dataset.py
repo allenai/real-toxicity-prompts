@@ -79,20 +79,19 @@ def perspective_worker(input: Queue, output: Queue, responses_file: Path, total:
     output.put(responses)
 
 
-def generate_with_prompts(prompts: List[str],
-                          generator: GPT2Generator,
-                          max_len: int,
-                          num_return_sequences: int) -> Iterable[List[str]]:
-    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True, position=1):
-        generations_for_prompt = []
-        for i in range(0, num_return_sequences, GENERATION_BATCH_SIZE):
-            batch_gen = generator.generate_multiple(
-                prompt,
-                max_len=max_len,
-                num_return_sequences=min(num_return_sequences - i, GENERATION_BATCH_SIZE)
-            )
-            generations_for_prompt.extend(batch_gen)
-        yield generations_for_prompt
+def generate_with_prompt(prompt: str,
+                         generator: GPT2Generator,
+                         max_len: int,
+                         num_return_sequences: int) -> List[str]:
+    generations = []
+    for i in range(0, num_return_sequences, GENERATION_BATCH_SIZE):
+        batch_gen = generator.generate_multiple(
+            prompt,
+            max_len=max_len,
+            num_return_sequences=min(num_return_sequences - i, GENERATION_BATCH_SIZE)
+        )
+        generations.extend(batch_gen)
+    return generations
 
 
 def create_ngrams_dataset(df: pd.DataFrame,
@@ -161,9 +160,25 @@ def create_ngrams_dataset(df: pd.DataFrame,
     # Generate
     if 'generate' not in disable:
         generations = []
-        for batch_i, batch in enumerate(generate_with_prompts(df.prompt, generator, max_gen_len, num_gen_per_prompt)):
+
+        # Resume generation
+        if generations_file.exists():
+            with generations_file.open() as f:
+                for line in f:
+                    # TODO: doesn't handle malformed lines
+                    generations.append(json.loads(line))
+            print(f'Resuming generation ({len(generations)} already computed)...')
+
+        num_generations = len(df.prompt) - len(generations)
+        for batch_i, prompt in tqdm(enumerate(df.prompt), total=num_generations, desc='Generation', dynamic_ncols=True,
+                                    position=1):
+            if batch_i < len(generations):
+                # Skip past already-generated prompts
+                continue
+
+            batch = generate_with_prompt(prompt, generator, max_gen_len, num_gen_per_prompt)
             generations.append(batch)
-            with generations_file.open('w') as f:
+            with generations_file.open('a') as f:
                 print(json.dumps(batch), file=f)
 
             if 'perspective' not in disable:
