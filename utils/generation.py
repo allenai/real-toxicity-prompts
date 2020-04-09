@@ -40,7 +40,7 @@ class GPT2Generator:
         # way that works at the moment of setting the pad_token_id to the <EOS> token that is already
         # included in the vocab size.
         self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer, pad_token=self.STOP_TOKEN)
-        assert self.tokenizer.eos_token == self.tokenizer.pad_token
+        assert self.tokenizer.eos_token_id == self.tokenizer.pad_token_id
 
     def __repr__(self):
         return f'<GPT2Generator model_name_or_path="{self.model}">'
