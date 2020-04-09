@@ -118,7 +118,13 @@ class AffectDataset(Dataset):
         logger.info(f"Querying {row_limit} rows from perspective database")
 
         session = perspective_db_session()
-        query = session.query(SpanScore).order_by(random()).limit(row_limit)
+        query = (
+            session.query(SpanScore)
+                .filter(SpanScore.end - SpanScore.begin >= 64)
+                .filter(SpanScore.end - SpanScore.begin <= 1024)
+                .order_by(random())
+                .limit(row_limit)
+        )
         df = pd.read_sql(query.statement, con=query.session.bind)
 
         # toxicity_query = session.query(SpanScore).order_by(SpanScore.toxicity.desc()).limit(5_000)
