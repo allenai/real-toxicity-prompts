@@ -177,7 +177,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
 
 def load_df(query: Query, cached_features_file: Path):
     if not PERSPECTIVE_DB.exists():
-        raise FileNotFoundError("Perspective database was not loaded. Try using the cached features file.")
+        raise FileNotFoundError("Perspective database was not found. Try using a cached features file.")
 
     # Load dataframe from query and select relevant columns
     print("Reading from database...")
