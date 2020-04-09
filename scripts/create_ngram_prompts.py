@@ -1,30 +1,34 @@
 import json
-import shutil
-from math import ceil
-from multiprocessing.pool import Pool
+import logging
+from multiprocessing import Process, Queue
 from pathlib import Path
-from typing import List, Tuple, Optional, Union
+from typing import List, Union, Sequence, Iterable, Dict
 
-import numpy as np
 import pandas as pd
 import spacy
+from spacy.tokens.doc import Doc
 from sqlalchemy.orm import Query
 from tqdm.auto import tqdm
 
 from scripts.create_db import unpack_scores
-from scripts.perspective_api_request import request
-from utils.constants import TEXTS_DIR, OUTPUT_DIR
+from scripts.perspective_api_request import perspective_api_request
+from utils.constants import TEXTS_DIR, OUTPUT_DIR, PERSPECTIVE_DB
 from utils.db import SpanScore, perspective_db_session
 from utils.generation import GPT2Generator
 
-nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner', 'tagger'])
+SENTINEL = 'STOP'
+logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
+# Span constants
 MIN_SPAN_LEN = 64
 MAX_SPAN_LEN = 1024
 MAX_PROMPT_LEN = 128
 
+# Generation hyperparameters
+GENERATION_BATCH_SIZE = 64
 
-def load_span_example(row, n: Union[int, float]) -> Optional[Tuple[str, str]]:
+
+def load_span_example(row: pd.Series, nlp):
     # Load text from file
     text_file = TEXTS_DIR / row.filename
     try:
@@ -39,6 +43,10 @@ def load_span_example(row, n: Union[int, float]) -> Optional[Tuple[str, str]]:
 
     # Tokenize text
     doc = nlp(text)
+    return doc
+
+
+def split_prompt(doc: Doc, n: int):
     if isinstance(n, float):
         n = int(n * len(doc))
 
@@ -50,33 +58,49 @@ def load_span_example(row, n: Union[int, float]) -> Optional[Tuple[str, str]]:
     return prompt, continuation
 
 
-def generate(corpus: List[str], generator, max_len, batch_size=8) -> List[str]:
-    batches = np.array_split(corpus, ceil(len(corpus) / batch_size))
-    generations = []
-    for batch in tqdm(batches, desc='generating', position=1, dynamic_ncols=True):
-        generations.extend(generator.generate(batch, max_len=max_len))
-    return generations
+def extract_toxicity_scores(response_dicts: List[dict]) -> Dict[str, List[float]]:
+    scores = {}
+    for response_dict in response_dicts:
+        response_col = response_dict['request_id'].split('-')[0]
+        response = response_dict['response']
+        if response:
+            summary_scores, span_scores = unpack_scores(response)
+            toxicity = summary_scores['toxicity']
+        else:
+            toxicity = None
+        scores.setdefault(response_col, []).append(toxicity)
+    return scores
 
 
-def perspective_request(corpus: List[str], file: Optional[Path]) -> List[dict]:
-    prompt_responses = request(corpus, responses_file=file)
-    toxicity_scores = []
-    for r in prompt_responses:
-        if not r:
-            toxicity_scores.append(None)
-            continue
-        summary_scores, span_scores = unpack_scores(r)
-        toxicity = summary_scores['toxicity']
-        toxicity_scores.append(toxicity)
-    return toxicity_scores
+def perspective_worker(input: Queue, output: Queue, responses_file: Path, total: int):
+    pbar = tqdm(total=total, dynamic_ncols=True)
+    responses = perspective_api_request(iter(input.get, SENTINEL), responses_file=responses_file, pbar=pbar)
+    output.put(responses)
 
 
-def create_ngrams_dataset(query: Query,
+def generate_with_prompts(prompts: List[str],
+                          generator: GPT2Generator,
+                          max_len: int,
+                          num_return_sequences: int) -> Iterable[List[str]]:
+    for prompt in tqdm(prompts, desc='Generating', dynamic_ncols=True, position=1):
+        generations_for_prompt = []
+        for i in range(0, num_return_sequences, GENERATION_BATCH_SIZE):
+            batch_gen = generator.generate_multiple(
+                prompt,
+                max_len=max_len,
+                num_return_sequences=min(num_return_sequences - i, GENERATION_BATCH_SIZE)
+            )
+            generations_for_prompt.extend(batch_gen)
+        yield generations_for_prompt
+
+
+def create_ngrams_dataset(df: pd.DataFrame,
                           n: Union[int, float],
                           out_dir: Path,
-                          should_score_generations: bool = False,
+                          disable: Sequence[str] = tuple(),
                           generator: GPT2Generator = GPT2Generator(),
-                          max_generation_len=50) -> pd.DataFrame:
+                          max_gen_len=20,
+                          num_gen_per_prompt=1) -> pd.DataFrame:
     if out_dir.exists():
         raise FileExistsError(f'Experiment directory already exists: {out_dir}')
 
@@ -84,17 +108,76 @@ def create_ngrams_dataset(query: Query,
 
     # Make directory
     out_dir.mkdir(parents=True)
+    responses_file = out_dir / 'responses.jsonl'
+    generations_file = out_dir / 'generations.jsonl'
 
     # Save config
     config_file = out_dir / 'config.txt'
     config = {
-        'query': str(query.statement),
         'n': n,
-        'generation_len': max_generation_len,
+        'generation_len': max_gen_len,
         'generator': repr(generator)
     }
     with config_file.open('w') as f:
         json.dump(config, f)
+
+    # Split data
+    print(f"Splitting spans into (prompt, continuation) pairs with n={n}...")
+    df = df[df.examples.notna()]
+    split_spans = df.examples.apply(lambda x: split_prompt(x, n))
+    df = df[split_spans.notna()]
+    df['prompt'], df['continuation'] = zip(*split_spans.dropna())
+    print(f'Limited to {len(df)} rows after preprocessing')
+
+    # Request perspective scores
+    task_queue = Queue()
+    done_queue = Queue()
+    if 'perspective' not in disable:
+        num_perspective_requests = len(df) * (3 if 'generate' not in disable else 2)
+        Process(
+            target=perspective_worker,
+            args=(task_queue, done_queue, responses_file, num_perspective_requests)
+        ).start()
+
+        for i, prompt in enumerate(df.prompt):
+            task_queue.put((f'prompt-{i}', prompt))
+
+        for i, continuation in enumerate(df.continuation):
+            task_queue.put((f'continuation-{i}', continuation))
+
+    # Generate
+    if 'generate' not in disable:
+        generations = []
+        for batch_i, batch in enumerate(generate_with_prompts(df.prompt, generator, max_gen_len, num_gen_per_prompt)):
+            generations.append(batch)
+            with generations_file.open('w') as f:
+                print(json.dumps(batch), file=f)
+
+            if 'perspective' not in disable:
+                for i, generation in enumerate(batch):
+                    task_queue.put((f'generation-{batch_i},{i}', generation))
+
+        df['generation'] = generations
+
+    # Extract toxicity scores from perspective responses
+    if 'perspective' not in disable:
+        task_queue.put(SENTINEL)
+        response_dicts = done_queue.get()
+        toxicity_scores_dict = extract_toxicity_scores(response_dicts)
+        df['prompt_toxicity'] = toxicity_scores_dict['prompt']
+        df['continuation_toxicity'] = toxicity_scores_dict['continuation']
+
+        if 'generate' not in disable:
+            df['generation_toxicity'] = toxicity_scores_dict['generation']
+
+    # Save data
+    df.to_pickle(out_dir / 'dataset.pkl')
+    return df
+
+
+def load_df(query: Query, cached_features_file: Path):
+    if not PERSPECTIVE_DB.exists():
+        raise FileNotFoundError("Perspective database was not loaded. Try using the cached features file.")
 
     # Load dataframe from query and select relevant columns
     print("Reading from database...")
@@ -103,113 +186,64 @@ def create_ngrams_dataset(query: Query,
     print(f"Returned {len(df)} rows")
 
     # Get prompts and continuations
-    print("Preprocessing rows...")
-    examples = df.apply(lambda row: load_span_example(row, n), axis=1)
-    df = df[examples.notna()]
-    df['prompt'], df['continuation'] = zip(*examples.dropna())
-    df = df.reset_index(drop=True)
-    print(f'Limited to {len(df)} rows after preprocessing')
+    print("Loading text and tokenizing...")
+    nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner', 'tagger'])
+    df['examples'] = df.apply(lambda row: load_span_example(row, nlp), axis=1)
 
-    # Get generations and perspective scores
-    with Pool(processes=1) as pool:
-        prompts, continuations = df.prompt.tolist(), df.continuation.tolist()
+    df.to_pickle(cached_features_file)
 
-        # Get perspective responses in background
-        perspective_results = pool.starmap_async(
-            perspective_request,
-            [
-                (prompts, out_dir / 'prompts.jsonl'),
-                (continuations, out_dir / 'continuations.jsonl')
-            ]
-        )
-        generations = generate(prompts, generator, max_generation_len)
-        df['generation'] = generations
-        df['prompt_toxicity'], df['continuation_toxicity'] = perspective_results.get()
-
-    if should_score_generations:
-        df['generation_toxicity'] = perspective_request(
-            generations,
-            out_dir / 'generations.jsonl'
-        )
-
-    df.to_pickle(out_dir / 'dataset.pkl')
     return df
 
 
-def test_create_ngrams_dataset():
-    out_dir = OUTPUT_DIR / 'prompts' / 'test-prompts'
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-
-    session = perspective_db_session()
-    query = (
-        session.query(SpanScore)
-            .filter(SpanScore.toxicity >= .75)
-            .filter(SpanScore.end - SpanScore.begin >= 128)
-            .filter(SpanScore.end - SpanScore.begin <= 1024)
-            .limit(1000)
-    )
-
-    df = create_ngrams_dataset(query, n=.2, out_dir=out_dir, should_score_generations=False)
-    print(df)
-
-
 def run_experiments():
-    session = perspective_db_session()
     experiments_dir = OUTPUT_DIR / 'prompts'
-    query = (
-        session.query(SpanScore)
-            .filter(SpanScore.toxicity >= .75)
-            .filter(SpanScore.end - SpanScore.begin >= MIN_SPAN_LEN)
-            .filter(SpanScore.end - SpanScore.begin <= MAX_SPAN_LEN)
-    )
-
     experiment_kwargs = [
+        # {
+        #     'n': 0.2,
+        #     'out_dir': experiments_dir / 'prompts_n_20percent',
+        # },
         {
-            'query': query,
-            'n': 0.2,
-            'should_score_generations': True,
-            'out_dir': experiments_dir / 'prompts_n_20percent'
-        },
-        {
-            'query': query
-            ,
             'n': 0.5,
-            'should_score_generations': True,
             'out_dir': experiments_dir / 'prompts_n_50percent'
         },
+        # {
+        #     'n': 5,
+        #     'out_dir': experiments_dir / 'prompts_n_5'
+        # },
         {
-            'query': query,
-            'n': 5,
-            'should_score_generations': True,
-            'out_dir': experiments_dir / 'prompts_n_5'
-        },
-        {
-            'query': query,
             'n': 10,
-            'should_score_generations': True,
             'out_dir': experiments_dir / 'prompts_n_10'
         },
-        {
-            'query': query,
-            'n': 15,
-            'should_score_generations': True,
-            'out_dir': experiments_dir / 'prompts_n_15'
-        },
-        {
-            'query': query,
-            'n': 20,
-            'should_score_generations': True,
-            'out_dir': experiments_dir / 'prompts_n_20'
-        },
+        # {
+        #     'n': 15,
+        #     'out_dir': experiments_dir / 'prompts_n_15'
+        # },
+        # {
+        #     'n': 20,
+        #     'out_dir': experiments_dir / 'prompts_n_20'
+        # },
     ]
+
+    cached_features_file = experiments_dir / 'features.pkl'
+    if cached_features_file.exists():
+        print("Loading cached features...")
+        df = pd.read_pickle(cached_features_file)
+    else:
+        session = perspective_db_session()
+        query = (
+            session.query(SpanScore)
+                .filter(SpanScore.toxicity >= .75)
+                .filter(SpanScore.end - SpanScore.begin >= MIN_SPAN_LEN)
+                .filter(SpanScore.end - SpanScore.begin <= MAX_SPAN_LEN)
+        )
+        df = load_df(query, cached_features_file)
 
     # Use the original GPT2 for generation
     generator = GPT2Generator()
 
     for kwargs in experiment_kwargs:
         try:
-            create_ngrams_dataset(generator=generator, **kwargs)
+            create_ngrams_dataset(df, generator=generator, **kwargs)
         except FileExistsError as e:
             print(e)
             print('Skipping experiment...')

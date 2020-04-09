@@ -1,9 +1,28 @@
-from typing import Sequence
+from typing import TypeVar, Iterable, List
 
 import numpy as np
 import torch
 
 from utils.constants import TEXTS_DIR
+
+T = TypeVar('T')
+
+
+def batchify(data: Iterable[T], batch_size: int) -> Iterable[List[T]]:
+    assert batch_size > 0
+
+    batch = []
+    for item in data:
+        # Yield next batch
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+
+        batch.append(item)
+
+    # Yield last un-filled batch
+    if len(batch) != 0:
+        yield batch
 
 
 def set_seed(seed, n_gpu):
