@@ -114,19 +114,19 @@ class AffectDataset(Dataset):
         return examples
 
     @staticmethod
-    def load_perspective_rows(row_limit=5_000) -> pd.DataFrame:
+    def load_perspective_rows(row_limit=100_000) -> pd.DataFrame:
         logger.info(f"Querying {row_limit} rows from perspective database")
 
         session = perspective_db_session()
         query = session.query(SpanScore).order_by(random()).limit(row_limit)
         df = pd.read_sql(query.statement, con=query.session.bind)
 
-        toxicity_query = session.query(SpanScore).order_by(SpanScore.toxicity.desc()).limit(5_000)
-        toxic_df = pd.read_sql(toxicity_query.statement, con=toxicity_query.session.bind)
-
-        # Append sampled toxic rows
-        # TODO: remove duplicates
-        df = df.append(toxic_df).drop_duplicates(subset=['filename', 'begin', 'end'])
+        # toxicity_query = session.query(SpanScore).order_by(SpanScore.toxicity.desc()).limit(5_000)
+        # toxic_df = pd.read_sql(toxicity_query.statement, con=toxicity_query.session.bind)
+        #
+        # # Append sampled toxic rows
+        # # TODO: remove duplicates
+        # df = df.append(toxic_df).drop_duplicates(subset=['filename', 'begin', 'end'])
 
         if len(df) < row_limit:
             raise RuntimeError("Selected perspective subset not large enough to subsample from")

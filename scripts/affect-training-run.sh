@@ -1,5 +1,5 @@
 PYTHONPATH=. python scripts/transformers/run_language_modeling.py \
-	--output_dir=output/affect/affect_5k_1layer_randomsample_upsample_toxicity_5k/finetune_output \
+	--output_dir=output/affect/affect_100k_1layer_randomsample/finetune_output \
 	--model_type=affect-gpt2 \
 	--model_name_or_path=gpt2 \
 	--do_train \
