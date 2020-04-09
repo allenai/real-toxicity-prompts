@@ -121,7 +121,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         if dataset_file.exists():
             raise FileExistsError(f'Dataset already created: {dataset_file}')
 
-        if disable != ('perspective',):
+        if 'perspective' not in disable:
             raise RuntimeError('Can only resume in generation-only mode')
 
     print(f'Running experiment with outputs in {out_dir}...')
