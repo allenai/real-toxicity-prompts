@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql.functions import random
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizer
@@ -113,24 +114,21 @@ class AffectDataset(Dataset):
         return examples
 
     @staticmethod
-    def load_perspective_rows(limit_rows=100_000) -> pd.DataFrame:
-        logger.info(f"Querying {limit_rows} rows from perspective database")
+    def load_perspective_rows(row_limit=5_000) -> pd.DataFrame:
+        logger.info(f"Querying {row_limit} rows from perspective database")
 
         session = perspective_db_session()
+        query = session.query(SpanScore).order_by(random()).limit(row_limit)
+        df = pd.read_sql(query.statement, con=query.session.bind)
 
-        low_tox_query = session.query(SpanScore). \
-            order_by(SpanScore.toxicity). \
-            limit(limit_rows // 2)
-        low_tox_rows = pd.read_sql(low_tox_query.statement, con=low_tox_query.session.bind)
+        toxicity_query = session.query(SpanScore).order_by(SpanScore.toxicity.desc()).limit(5_000)
+        toxic_df = pd.read_sql(toxicity_query.statement, con=toxicity_query.session.bind)
 
-        high_tox_query = session.query(SpanScore). \
-            order_by(SpanScore.toxicity.desc()). \
-            limit(limit_rows // 2)
-        high_tox_rows = pd.read_sql(high_tox_query.statement, con=high_tox_query.session.bind)
+        # Append sampled toxic rows
+        # TODO: remove duplicates
+        df = df.append(toxic_df).drop_duplicates(subset=['filename', 'begin', 'end'])
 
-        rows = low_tox_rows.append(high_tox_rows)
-
-        if len(rows) < limit_rows:
+        if len(df) < row_limit:
             raise RuntimeError("Selected perspective subset not large enough to subsample from")
 
-        return rows
+        return df

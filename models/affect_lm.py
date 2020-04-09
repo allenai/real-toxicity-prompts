@@ -19,15 +19,10 @@ class Affect(nn.Module):
     def __init__(self,
                  affect_dim: int,
                  vocab_size: int,
-                 beta: float = 1.0,
-                 hidden_dim=100):
+                 beta: float = 1.0):
         super().__init__()
         self.beta = beta
-        self.affect2vocab = nn.Sequential(
-            nn.Linear(affect_dim, hidden_dim),
-            nn.Sigmoid(),
-            nn.Linear(hidden_dim, vocab_size)
-        )
+        self.affect2vocab = nn.Linear(affect_dim, vocab_size)
 
     def forward(self, affect_labels: torch.Tensor) -> torch.Tensor:
         return self.beta * self.affect2vocab(affect_labels)
