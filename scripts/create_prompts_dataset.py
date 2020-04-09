@@ -15,6 +15,7 @@ from scripts.perspective_api_request import perspective_api_request
 from utils.constants import TEXTS_DIR, OUTPUT_DIR, PERSPECTIVE_DB
 from utils.db import SpanScore, perspective_db_session
 from utils.generation import GPT2Generator
+from utils.utils import batchify
 
 SENTINEL = 'STOP'
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
@@ -82,7 +83,7 @@ def generate_with_prompts(prompts: List[str],
                           generator: GPT2Generator,
                           max_len: int,
                           num_return_sequences: int) -> Iterable[List[str]]:
-    for prompt in tqdm(prompts, desc='Generating', dynamic_ncols=True, position=1):
+    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True, position=1):
         generations_for_prompt = []
         for i in range(0, num_return_sequences, GENERATION_BATCH_SIZE):
             batch_gen = generator.generate_multiple(
@@ -133,7 +134,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
     task_queue = Queue()
     done_queue = Queue()
     if 'perspective' not in disable:
-        num_perspective_requests = len(df) * (3 if 'generate' not in disable else 2)
+        num_perspective_requests = len(df) * (2 + (num_gen_per_prompt if 'generate' not in disable else 0))
         Process(
             target=perspective_worker,
             args=(task_queue, done_queue, responses_file, num_perspective_requests)
@@ -168,7 +169,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         df['continuation_toxicity'] = toxicity_scores_dict['continuation']
 
         if 'generate' not in disable:
-            df['generation_toxicity'] = toxicity_scores_dict['generation']
+            df['generation_toxicity'] = list(batchify(toxicity_scores_dict['generation'], num_gen_per_prompt))
 
     # Save data
     df.to_pickle(out_dir / 'dataset.pkl')

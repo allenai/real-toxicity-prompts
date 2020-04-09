@@ -122,15 +122,18 @@ class GPT2Generator:
                           p: float = 0.9,
                           num_return_sequences: int = 1,
                           sample: bool = True,
-                          repetition_penalty: float = 1.0):
+                          repetition_penalty: float = 1.0,
+                          include_prompt_in_output: bool = False):
         max_len = adjust_length_to_model(max_len, max_sequence_length=self.model.config.max_position_embeddings)
 
         encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt")
         encoded_prompt = encoded_prompt.to(self.device)
 
+        prompt_len = len(encoded_prompt[0])
+
         output_sequences = self.model.generate(
             input_ids=encoded_prompt,
-            max_length=max_len + len(encoded_prompt[0]),
+            max_length=max_len + prompt_len,
             temperature=temperature,
             top_k=k,
             top_p=p,
@@ -149,7 +152,7 @@ class GPT2Generator:
                 stop_index = [i for i, x in enumerate(output) if x == self.tokenizer.eos_token_id][0]
             except IndexError:
                 stop_index = None
-            output = output[:stop_index]
+            output = output[None if include_prompt_in_output else prompt_len:stop_index]
             decoded_outputs.append(self.tokenizer.decode(output, clean_up_tokenization_spaces=True))
 
         return decoded_outputs
@@ -163,4 +166,11 @@ def test_generate():
         'The purpose of this workshop is to check whether we can'
     ]
     out = generator.generate(prompt)
+    print(*out, sep='\n')
+
+
+def test_generate_multiple():
+    generator = GPT2Generator()
+    prompt = 'in this paper we'
+    out = generator.generate_multiple(prompt)
     print(*out, sep='\n')
