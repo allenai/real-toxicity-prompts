@@ -102,23 +102,35 @@ def create_ngrams_dataset(df: pd.DataFrame,
                           generator: GPT2Generator = GPT2Generator(),
                           max_gen_len=20,
                           num_gen_per_prompt=1) -> pd.DataFrame:
-    if out_dir.exists():
-        raise FileExistsError(f'Experiment directory already exists: {out_dir}')
-
-    print(f'Running experiment with outputs in {out_dir}...')
-
-    # Make directory
-    out_dir.mkdir(parents=True)
+    # Store locations of output files
+    config_file = out_dir / 'config.txt'
     responses_file = out_dir / 'responses.jsonl'
     generations_file = out_dir / 'generations.jsonl'
+    dataset_file = out_dir / 'dataset.pkl'
 
-    # Save config
-    config_file = out_dir / 'config.txt'
+    # Create config
     config = {
         'n': n,
         'generation_len': max_gen_len,
         'generator': repr(generator)
     }
+
+    if out_dir.exists():
+        if config_file.exists() and json.load(config_file.open()) != config:
+            raise FileExistsError(f'Config file already exists and does not match current config: {config_file}')
+
+        if dataset_file.exists():
+            raise FileExistsError(f'Dataset already created: {dataset_file}')
+
+        if disable != ('perspective',):
+            raise RuntimeError('Can only resume in generation-only mode')
+
+    print(f'Running experiment with outputs in {out_dir}...')
+
+    # Make directory
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save config
     with config_file.open('w') as f:
         json.dump(config, f)
 
@@ -172,7 +184,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
             df['generation_toxicity'] = list(batchify(toxicity_scores_dict['generation'], num_gen_per_prompt))
 
     # Save data
-    df.to_pickle(out_dir / 'dataset.pkl')
+    df.to_pickle(dataset_file)
     return df
 
 
