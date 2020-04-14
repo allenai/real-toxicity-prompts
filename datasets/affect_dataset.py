@@ -14,7 +14,7 @@ from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizer
 
 from utils.constants import TEXTS_DIR, PERSPECTIVE_API_ATTRIBUTES
-from utils.db import perspective_db_session, SpanScore
+from utils.db import perspective_db_session, primary_key, SpanScore
 
 Session = sessionmaker()
 logger = logging.getLogger(__name__)
@@ -114,27 +114,34 @@ class AffectDataset(Dataset):
         return examples
 
     @staticmethod
-    def load_perspective_rows(row_limit=100_000) -> pd.DataFrame:
+    def load_perspective_rows(row_limit=10_000) -> pd.DataFrame:
         logger.info(f"Querying {row_limit} rows from perspective database")
-
         session = perspective_db_session()
-        query = (
+
+        percent_toxic = 0.1
+        num_toxic_rows = int(row_limit * percent_toxic)
+
+        toxic_query = (
             session.query(SpanScore)
-                .filter(SpanScore.end - SpanScore.begin >= 64)
-                .filter(SpanScore.end - SpanScore.begin <= 1024)
+                .filter(SpanScore.toxicity > 0.5)
                 .order_by(random())
-                .limit(row_limit)
+                .limit(num_toxic_rows)
         )
-        df = pd.read_sql(query.statement, con=query.session.bind)
 
-        # toxicity_query = session.query(SpanScore).order_by(SpanScore.toxicity.desc()).limit(5_000)
-        # toxic_df = pd.read_sql(toxicity_query.statement, con=toxicity_query.session.bind)
-        #
-        # # Append sampled toxic rows
-        # # TODO: remove duplicates
-        # df = df.append(toxic_df).drop_duplicates(subset=['filename', 'begin', 'end'])
+        non_toxic_query = (
+            session.query(SpanScore)
+                .filter(SpanScore.toxicity <= 0.5)
+                .order_by(random())
+                .limit(row_limit - num_toxic_rows)
+        )
 
-        if len(df) < row_limit:
-            raise RuntimeError("Selected perspective subset not large enough to subsample from")
+        toxic_df = pd.read_sql(toxic_query.statement, con=toxic_query.session.bind)
+        non_toxic_df = pd.read_sql(non_toxic_query.statement, con=non_toxic_query.session.bind)
+        df = toxic_df.append(non_toxic_df)
+
+        # Check DataFrame
+        span_score_pk = primary_key(SpanScore)
+        assert not df.duplicated(subset=span_score_pk).any()
+        assert len(df) == row_limit
 
         return df

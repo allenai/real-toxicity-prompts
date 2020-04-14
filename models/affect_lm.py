@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers import GPT2LMHeadModel
 
-from utils.datasets import NUM_AFFECTS
+from datasets.affect_dataset import NUM_AFFECTS
 
 
 class Affect(nn.Module):

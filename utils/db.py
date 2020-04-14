@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, String, Integer, ForeignKey, create_engine
+from sqlalchemy import Column, Float, String, Integer, ForeignKey, create_engine, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -60,3 +60,7 @@ def perspective_db_session(**kwargs) -> Session:
     engine = perspective_db_engine(**kwargs)
     session = Session(bind=engine)
     return session
+
+
+def primary_key(table: Base):
+    tuple(pk.name for pk in inspect(table).primary_key)

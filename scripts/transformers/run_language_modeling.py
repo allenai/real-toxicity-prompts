@@ -23,7 +23,6 @@ import argparse
 import glob
 import logging
 import os
-import pickle
 import random
 import re
 import shutil
@@ -33,41 +32,21 @@ from typing import Dict, List, Tuple
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
-from torch.utils.data.dataloader import default_collate
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
-
 from transformers import (
     WEIGHTS_NAME,
     AdamW,
-    BertConfig,
-    BertForMaskedLM,
-    BertTokenizer,
-    CamembertConfig,
-    CamembertForMaskedLM,
-    CamembertTokenizer,
-    DistilBertConfig,
-    DistilBertForMaskedLM,
-    DistilBertTokenizer,
     GPT2Config,
-    GPT2LMHeadModel,
     GPT2Tokenizer,
-    OpenAIGPTConfig,
-    OpenAIGPTLMHeadModel,
-    OpenAIGPTTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
-    RobertaConfig,
-    RobertaForMaskedLM,
-    RobertaTokenizer,
     get_linear_schedule_with_warmup,
 )
 
+from datasets.affect_dataset import AffectDataset
 from models.affect_lm import AffectGPT2LMHeadModel
-from utils.datasets import AffectDataset
-
-_AFFECT = "affect"
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -76,87 +55,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-MODEL_CLASSES = {
-    "gpt2": (GPT2Config, GPT2LMHeadModel, GPT2Tokenizer),
-    "affect-gpt2": (GPT2Config, AffectGPT2LMHeadModel, GPT2Tokenizer),
-    "openai-gpt": (OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
-    "bert": (BertConfig, BertForMaskedLM, BertTokenizer),
-    "roberta": (RobertaConfig, RobertaForMaskedLM, RobertaTokenizer),
-    "distilbert": (DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer),
-    "camembert": (CamembertConfig, CamembertForMaskedLM, CamembertTokenizer),
-}
-
-
-class TextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
-        assert os.path.isfile(file_path)
-
-        block_size = block_size - (tokenizer.max_len - tokenizer.max_len_single_sentence)
-
-        directory, filename = os.path.split(file_path)
-        cached_features_file = os.path.join(
-            directory, args.model_type + "_cached_lm_" + str(block_size) + "_" + filename
-        )
-
-        if os.path.exists(cached_features_file) and not args.overwrite_cache:
-            logger.info("Loading features from cached file %s", cached_features_file)
-            with open(cached_features_file, "rb") as handle:
-                self.examples = pickle.load(handle)
-        else:
-            logger.info("Creating features from dataset file at %s", directory)
-
-            self.examples = []
-            with open(file_path, encoding="utf-8") as f:
-                text = f.read()
-
-            tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
-
-            for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
-                self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i: i + block_size]))
-            # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
-            # If your dataset is small, first you should loook for a bigger one :-) and second you
-            # can change this behavior by adding (model specific) padding.
-
-            logger.info("Saving features into cached file %s", cached_features_file)
-            with open(cached_features_file, "wb") as handle:
-                pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, item):
-        return torch.tensor(self.examples[item], dtype=torch.long)
-
-
-class LineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
-        assert os.path.isfile(file_path)
-        # Here, we do not cache the features, operating under the assumption
-        # that we will soon use fast multithreaded tokenizers from the
-        # `tokenizers` repo everywhere =)
-        logger.info("Creating features from dataset file at %s", file_path)
-
-        with open(file_path, encoding="utf-8") as f:
-            lines = [line for line in f.read().splitlines() if (len(line) > 0 and not line.isspace())]
-
-        self.examples = tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=block_size)["input_ids"]
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i):
-        return torch.tensor(self.examples[i], dtype=torch.long)
+# Use EOS token as pad token during training (can be arbitrary since we apply an attention mask)
+PAD_TOKEN = "<|endoftext|>"
 
 
 def load_and_cache_examples(args, tokenizer, evaluate=False):
-    file_path = args.eval_data_file if evaluate else args.train_data_file
-    if args.line_by_line:
-        return LineByLineTextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
-    elif args.model_type == 'affect-gpt2':
-        parent_dir = Path(args.output_dir).parent
-        return AffectDataset(tokenizer, args, parent_dir, evaluate, args.block_size)
-    else:
-        return TextDataset(tokenizer, args, file_path=file_path, block_size=args.block_size)
+    examples_dir = Path(args.output_dir) / 'examples'
+    return AffectDataset(tokenizer, args, examples_dir, evaluate, args.block_size)
 
 
 def set_seed(args):
@@ -203,40 +108,6 @@ def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
         shutil.rmtree(checkpoint)
 
 
-def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> Tuple[torch.Tensor, torch.Tensor]:
-    """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
-
-    if tokenizer.mask_token is None:
-        raise ValueError(
-            "This tokenizer does not have a mask token which is necessary for masked language modeling. Remove the --mlm flag if you want to use this tokenizer."
-        )
-
-    labels = inputs.clone()
-    # We sample a few tokens in each sequence for masked-LM training (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
-    probability_matrix = torch.full(labels.shape, args.mlm_probability)
-    special_tokens_mask = [
-        tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
-    ]
-    probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0)
-    if tokenizer._pad_token is not None:
-        padding_mask = labels.eq(tokenizer.pad_token_id)
-        probability_matrix.masked_fill_(padding_mask, value=0.0)
-    masked_indices = torch.bernoulli(probability_matrix).bool()
-    labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-    # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-    indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
-    inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-
-    # 10% of the time, we replace masked input tokens with random word
-    indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-    random_words = torch.randint(len(tokenizer), labels.shape, dtype=torch.long)
-    inputs[indices_random] = random_words[indices_random]
-
-    # The rest of the time (10% of the time) we keep the masked input tokens unchanged
-    return inputs, labels
-
-
 def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
     """ Train the model """
     if args.local_rank in [-1, 0]:
@@ -244,20 +115,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
-    def collate(examples: List[torch.Tensor]):
-        if args.model_type == 'affect-gpt2':
-            input_ids, affects = zip(*examples)
-            padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
-            return default_collate(list(zip(padded_ids, affects)))
-
-        if tokenizer._pad_token is None:
-            return pad_sequence(examples, batch_first=True)
-        return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
-
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate
-    )
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -359,26 +218,23 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     set_seed(args)  # Added here for reproducibility
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
+        for step, (input_ids, affect_labels) in enumerate(epoch_iterator):
 
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
                 steps_trained_in_current_epoch -= 1
                 continue
 
-            if args.model_type == 'affect-gpt2':
-                batch, affects = batch
-                affects = affects.unsqueeze(dim=1).to(args.device)
-
-            inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
+            padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
+            inputs, labels = padded_ids, padded_ids
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
-            model.train()
-            if args.model_type == 'affect-gpt2':
-                outputs = model(inputs, labels=labels, affect_labels=affects)
-            else:
-                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
 
+            affect_labels = affect_labels.unsqueeze(dim=1).to(args.device)
+
+            model.train()
+
+            outputs = model(inputs, labels=labels, affect_labels=affect_labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -475,20 +331,8 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
 
     # Note that DistributedSampler samples randomly
 
-    def collate(examples: List[torch.Tensor]):
-        if args.model_type == 'affect-gpt2':
-            input_ids, affects = zip(*examples)
-            padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
-            return default_collate(list(zip(padded_ids, affects)))
-
-        if tokenizer._pad_token is None:
-            return pad_sequence(examples, batch_first=True)
-        return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
-
     eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(
-        eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate
-    )
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     # multi-gpu evaluate
     if args.n_gpu > 1:
@@ -502,20 +346,16 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     nb_eval_steps = 0
     model.eval()
 
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        if args.model_type == 'affect-gpt2':
-            batch, affects = batch
-            affects = affects.unsqueeze(dim=1).to(args.device)
-
-        inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
+    for input_ids, affect_labels in tqdm(eval_dataloader, desc="Evaluating"):
+        padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
+        inputs, labels = padded_ids, padded_ids
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
 
+        affect_labels = affect_labels.unsqueeze(dim=1).to(args.device)
+
         with torch.no_grad():
-            if args.model_type == 'affect-gpt2':
-                outputs = model(inputs, labels=labels, affect_labels=affects)
-            else:
-                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            outputs = model(inputs, labels=labels, affect_labels=affect_labels)
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
         nb_eval_steps += 1
@@ -542,10 +382,6 @@ def main():
     parser = argparse.ArgumentParser()
 
     # Required parameters
-    # TODO: add assert for required
-    parser.add_argument(
-        "--train_data_file", default=None, type=str, required=False, help="The input training data file (a text file)."
-    )
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -558,17 +394,6 @@ def main():
 
     # Other parameters
     parser.add_argument(
-        "--eval_data_file",
-        default=None,
-        type=str,
-        help="An optional input evaluation data file to evaluate the perplexity on (a text file).",
-    )
-    parser.add_argument(
-        "--line_by_line",
-        action="store_true",
-        help="Whether distinct lines of text in the dataset are to be handled as distinct sequences.",
-    )
-    parser.add_argument(
         "--should_continue", action="store_true", help="Whether to continue from latest checkpoint in output_dir"
     )
     parser.add_argument(
@@ -576,26 +401,6 @@ def main():
         default=None,
         type=str,
         help="The model checkpoint for weights initialization. Leave None if you want to train a model from scratch.",
-    )
-
-    parser.add_argument(
-        "--mlm", action="store_true", help="Train with masked-language modeling loss instead of language modeling."
-    )
-    parser.add_argument(
-        "--mlm_probability", type=float, default=0.15, help="Ratio of tokens to mask for masked language modeling loss"
-    )
-
-    parser.add_argument(
-        "--config_name",
-        default=None,
-        type=str,
-        help="Optional pretrained config name or path if not the same as model_name_or_path. If both are None, initialize a new config.",
-    )
-    parser.add_argument(
-        "--tokenizer_name",
-        default=None,
-        type=str,
-        help="Optional pretrained tokenizer name or path if not the same as model_name_or_path. If both are None, initialize a new tokenizer.",
     )
     parser.add_argument(
         "--cache_dir",
@@ -690,16 +495,6 @@ def main():
     parser.add_argument("--server_port", type=str, default="", help="For distant debugging.")
     args = parser.parse_args()
 
-    if args.model_type in ["bert", "roberta", "distilbert", "camembert"] and not args.mlm:
-        raise ValueError(
-            "BERT and RoBERTa-like models do not have LM heads but masked LM heads. They must be run using the --mlm "
-            "flag (masked language modeling)."
-        )
-    if args.eval_data_file is None and args.model_type != 'affect-gpt2' and args.do_eval:
-        raise ValueError(
-            "Cannot do evaluation without an evaluation data file. Either supply a file to --eval_data_file "
-            "or remove the --do_eval argument."
-        )
     if args.should_continue:
         sorted_checkpoints = _sorted_checkpoints(args)
         if len(sorted_checkpoints) == 0:
@@ -767,29 +562,8 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training download model & vocab
 
-    config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
-
-    if args.config_name:
-        config = config_class.from_pretrained(args.config_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        config = config_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    else:
-        config = config_class()
-
-    if args.tokenizer_name:
-        tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        if args.model_type == 'affect-gpt2':
-            tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path,
-                                                        cache_dir=args.cache_dir,
-                                                        pad_token='<|endoftext|>')
-        else:
-            tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    else:
-        raise ValueError(
-            "You are instantiating a new {} tokenizer. This is not supported, but you can do it from another script, save it,"
-            "and load it from here, using --tokenizer_name".format(tokenizer_class.__name__)
-        )
+    config = GPT2Config.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    tokenizer = GPT2Tokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir, pad_token=PAD_TOKEN)
 
     if args.block_size <= 0:
         args.block_size = tokenizer.max_len
@@ -797,17 +571,12 @@ def main():
     else:
         args.block_size = min(args.block_size, tokenizer.max_len)
 
-    if args.model_name_or_path:
-        model = model_class.from_pretrained(
-            args.model_name_or_path,
-            from_tf=bool(".ckpt" in args.model_name_or_path),
-            config=config,
-            cache_dir=args.cache_dir,
-        )
-    else:
-        logger.info("Training new model from scratch")
-        model = model_class(config=config)
-
+    model = AffectGPT2LMHeadModel.from_pretrained(
+        args.model_name_or_path,
+        from_tf=bool(".ckpt" in args.model_name_or_path),
+        config=config,
+        cache_dir=args.cache_dir,
+    )
     model.to(args.device)
 
     if args.local_rank == 0:
@@ -847,8 +616,8 @@ def main():
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
         # Load a trained model and vocabulary that you have fine-tuned
-        model = model_class.from_pretrained(args.output_dir)
-        tokenizer = tokenizer_class.from_pretrained(args.output_dir)
+        model = AffectGPT2LMHeadModel.from_pretrained(args.output_dir)
+        tokenizer = GPT2Tokenizer.from_pretrained(args.output_dir)
         model.to(args.device)
 
     # Evaluation
@@ -865,7 +634,7 @@ def main():
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
             prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
 
-            model = model_class.from_pretrained(checkpoint)
+            model = AffectGPT2LMHeadModel.from_pretrained(checkpoint)
             model.to(args.device)
             result = evaluate(args, model, tokenizer, prefix=prefix)
             result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
