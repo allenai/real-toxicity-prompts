@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
+# Modified script from HuggingFace transformers/examples/run_language_modeling.py
+# Fine-tunes the AffectLM variant of GPT2.
+
 Fine-tuning the library models for language modeling on a text file (GPT, GPT-2, BERT, RoBERTa).
 GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
 using a masked language modeling (MLM) loss.
@@ -229,7 +232,6 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             inputs, labels = padded_ids, padded_ids
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
-
             affect_labels = affect_labels.unsqueeze(dim=1).to(args.device)
 
             model.train()
@@ -351,7 +353,6 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         inputs, labels = padded_ids, padded_ids
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
-
         affect_labels = affect_labels.unsqueeze(dim=1).to(args.device)
 
         with torch.no_grad():
@@ -562,6 +563,7 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training download model & vocab
 
+    # Create GPT2 config and tokenizer with custom pad token (for training with padded sequences)
     config = GPT2Config.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
     tokenizer = GPT2Tokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir, pad_token=PAD_TOKEN)
 
@@ -571,6 +573,7 @@ def main():
     else:
         args.block_size = min(args.block_size, tokenizer.max_len)
 
+    # Create AffectLM model
     model = AffectGPT2LMHeadModel.from_pretrained(
         args.model_name_or_path,
         from_tf=bool(".ckpt" in args.model_name_or_path),
