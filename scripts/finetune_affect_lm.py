@@ -400,6 +400,14 @@ def main():
         help="The output directory where the model predictions and checkpoints will be written.",
     )
 
+    # AffectLM parameters
+    parser.add_argument(
+        "--affect_beta",
+        default=1,
+        type=int,
+        help="Beta to set the AffectLM model to before training and eval"
+    )
+
     # Other parameters
     parser.add_argument(
         "--should_continue", action="store_true", help="Whether to continue from latest checkpoint in output_dir"
@@ -587,6 +595,7 @@ def main():
         config=config,
         cache_dir=args.cache_dir,
     )
+    model.affect.beta = args.affect_beta  # Affect beta set before training/eval
     model.to(args.device)
 
     if args.local_rank == 0:
