@@ -62,8 +62,18 @@ logger = logging.getLogger(__name__)
 PAD_TOKEN = "<|endoftext|>"
 
 
+def make_collate_fn(tokenizer: PreTrainedTokenizer):
+    def collate_fn(examples: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
+        input_ids, affect_labels = zip(*examples)
+        padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
+        return padded_ids, torch.stack(affect_labels),
+
+    return collate_fn
+
+
 def load_and_cache_examples(args, tokenizer, evaluate=False):
     examples_dir = Path(args.output_dir) / 'examples'
+    examples_dir.mkdir(exist_ok=True)
     return AffectDataset(tokenizer, args, examples_dir, evaluate, args.block_size)
 
 
@@ -119,7 +129,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
+                                  collate_fn=make_collate_fn(tokenizer))
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -228,8 +239,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 steps_trained_in_current_epoch -= 1
                 continue
 
-            padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
-            inputs, labels = padded_ids, padded_ids
+            inputs, labels = input_ids, input_ids
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             affect_labels = affect_labels.unsqueeze(dim=1).to(args.device)
@@ -334,7 +344,8 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     # Note that DistributedSampler samples randomly
 
     eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size,
+                                 collate_fn=make_collate_fn(tokenizer))
 
     # multi-gpu evaluate
     if args.n_gpu > 1:
@@ -349,8 +360,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     model.eval()
 
     for input_ids, affect_labels in tqdm(eval_dataloader, desc="Evaluating"):
-        padded_ids = pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
-        inputs, labels = padded_ids, padded_ids
+        inputs, labels = input_ids, input_ids
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
         affect_labels = affect_labels.unsqueeze(dim=1).to(args.device)
@@ -388,9 +398,6 @@ def main():
         type=str,
         required=True,
         help="The output directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument(
-        "--model_type", type=str, required=True, help="The model architecture to be trained or fine-tuned.",
     )
 
     # Other parameters
@@ -587,6 +594,10 @@ def main():
 
     logger.info("Training/evaluation parameters %s", args)
 
+    # Create output directory if needed
+    if args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir, exist_ok=True)
+
     # Training
     if args.do_train:
         if args.local_rank not in [-1, 0]:
@@ -602,10 +613,6 @@ def main():
 
     # Saving best-practices: if you use save_pretrained for the model and tokenizer, you can reload them using from_pretrained()
     if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        # Create output directory if needed
-        if args.local_rank in [-1, 0]:
-            os.makedirs(args.output_dir, exist_ok=True)
-
         logger.info("Saving model checkpoint to %s", args.output_dir)
         # Save a trained model, configuration and tokenizer using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`

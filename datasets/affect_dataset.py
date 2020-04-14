@@ -53,7 +53,7 @@ class AffectDataset(Dataset):
         block_size = block_size - (tokenizer.max_len - tokenizer.max_len_single_sentence)
 
         cached_features_file = (
-                parent_dir / f'{args.model_type}_cached_lm_{args.block_size}_affect.txt'
+                parent_dir / f'affect_gpt2_cached_lm_{args.block_size}_affect.txt'
         )
 
         if cached_features_file.exists() and not args.overwrite_cache:
