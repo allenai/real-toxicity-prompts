@@ -1,6 +1,7 @@
-PYTHONPATH=. python scripts/transformers/run_language_modeling.py \
+#!/bin/bash
+mkdir -p output/affect
+PYTHONPATH=. python scripts/finetune_affect_lm.py \
 	--output_dir=output/affect/"$1" \
-	--model_type=affect-gpt2 \
 	--model_name_or_path=gpt2 \
 	--do_train \
 	--do_eval \
