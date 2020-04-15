@@ -38,6 +38,10 @@ class AffectGPT2LMHeadModel(GPT2LMHeadModel):
         for p in self.transformer.parameters():
             p.requires_grad = False
 
+    def freeze_lm_head(self):
+        for p in self.lm_head.parameters():
+            p.requires_grad = False
+
     def forward(
             self,
             input_ids=None,

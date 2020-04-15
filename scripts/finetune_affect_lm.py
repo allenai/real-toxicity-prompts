@@ -407,6 +407,16 @@ def main():
         type=int,
         help="Beta to set the AffectLM model to before training and eval"
     )
+    parser.add_argument(
+        "--freeze_transformer",
+        action="store_true",
+        help="Freeze the transformer parameters."
+    )
+    parser.add_argument(
+        "--freeze_lm_head",
+        action="store_true",
+        help="Freeze the GPT-2 LM head parameters."
+    )
 
     # Other parameters
     parser.add_argument(
@@ -596,6 +606,10 @@ def main():
         cache_dir=args.cache_dir,
     )
     model.affect.beta = args.affect_beta  # Affect beta set before training/eval
+    if args.freeze_transformer:
+        model.freeze_transformer()
+    if args.freeze_lm_head:
+        model.freeze_lm_head()
     model.to(args.device)
 
     if args.local_rank == 0:

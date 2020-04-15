@@ -13,4 +13,7 @@ PYTHONPATH=. python scripts/finetune_affect_lm.py \
 	--per_gpu_train_batch_size=2 \
 	--per_gpu_eval_batch_size=8 \
 	--gradient_accumulation_steps=8 \
-	--block_size=512
+	--block_size=512 \
+	--affect_beta=5 \
+	--freeze_transformer \
+	--freeze_lm_head
