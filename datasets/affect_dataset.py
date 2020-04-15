@@ -114,22 +114,28 @@ class AffectDataset(Dataset):
         return examples
 
     @staticmethod
-    def load_perspective_rows(row_limit=10_000) -> pd.DataFrame:
+    def load_perspective_rows(row_limit=5_500) -> pd.DataFrame:
         logger.info(f"Querying {row_limit} rows from perspective database")
         session = perspective_db_session()
+
+        base_query = (
+            session.query(SpanScore)
+                .filter(SpanScore.end - SpanScore.begin > 64)
+                .filter(SpanScore.end - SpanScore.begin < 2048)
+        )
 
         percent_toxic = 0.1
         num_toxic_rows = int(row_limit * percent_toxic)
 
         toxic_query = (
-            session.query(SpanScore)
+            base_query
                 .filter(SpanScore.toxicity > 0.5)
                 .order_by(random())
                 .limit(num_toxic_rows)
         )
 
         non_toxic_query = (
-            session.query(SpanScore)
+            base_query
                 .filter(SpanScore.toxicity <= 0.5)
                 .order_by(random())
                 .limit(row_limit - num_toxic_rows)

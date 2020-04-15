@@ -5,11 +5,10 @@ PYTHONPATH=. python scripts/finetune_affect_lm.py \
 	--model_name_or_path=gpt2 \
 	--do_train \
 	--do_eval \
-	--num_train_epochs=10 \
+	--num_train_epochs=20 \
 	--evaluate_during_training \
 	--log_after_epoch \
 	--save_after_epoch \
-	--patience=2 \
 	--per_gpu_train_batch_size=2 \
 	--per_gpu_eval_batch_size=8 \
 	--gradient_accumulation_steps=8 \

@@ -22,10 +22,16 @@ class Affect(nn.Module):
                  beta: float = 1.0):
         super().__init__()
         self.beta = beta
-        self.affect2vocab = nn.Linear(affect_dim, vocab_size)
+        self.affect2vocab = nn.Linear(affect_dim, vocab_size, bias=True)
+        self.init_weights()
 
     def forward(self, affect_labels: torch.Tensor) -> torch.Tensor:
         return self.beta * self.affect2vocab(affect_labels)
+
+    def init_weights(self, initializer_range=0.02):
+        # initializer_range taken from GPT2Config
+        self.affect2vocab.weight.data.normal_(mean=0.0, std=initializer_range)
+        self.affect2vocab.bias.data.zero_()
 
 
 class AffectGPT2LMHeadModel(GPT2LMHeadModel):
@@ -66,7 +72,7 @@ class AffectGPT2LMHeadModel(GPT2LMHeadModel):
 
         lm_logits = self.lm_head(hidden_states)
 
-        if self.affect_labels is not None:
+        if affect_labels is not None and self.affect is not None:
             # Add affect logits to lm logits
             affect_logits = self.affect(affect_labels)
             lm_logits += affect_logits
