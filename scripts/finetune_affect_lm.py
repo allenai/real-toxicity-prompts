@@ -29,6 +29,7 @@ import os
 import random
 import re
 import shutil
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -37,7 +38,13 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
-from tqdm import tqdm, trange
+from tqdm import tqdm as std_tqdm
+from tqdm import trange as std_trange
+
+# Enable dynamic resizing of progress bars to fit environment
+tqdm = partial(std_tqdm, dynamic_ncols=True)
+trange = partial(std_trange, dynamic_ncols=True)
+
 from transformers import (
     WEIGHTS_NAME,
     AdamW,
