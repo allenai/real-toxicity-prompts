@@ -19,26 +19,20 @@ from utils.db import perspective_db_session, primary_key, SpanScore
 Session = sessionmaker()
 logger = logging.getLogger(__name__)
 
-NUM_AFFECTS = len(PERSPECTIVE_API_ATTRIBUTES)
+NUM_AFFECTS = 4
 
 
-def create_affect_vector(toxicity: float = 0.,
-                         severe_toxicity: float = 0.,
-                         identity_attack: float = 0.,
-                         insult: float = 0.,
-                         threat: float = 0.,
+def create_affect_vector(toxic: float = 0.,
                          profanity: float = 0.,
-                         sexually_explicit: float = 0.,
-                         flirtation: float = 0.) -> List[float]:
+                         sexually_explicit: float = 0.) -> List[float]:
+    # TODO: try using just a 2-dim vector here
+    non_toxic = toxic < 0.5 and profanity < 0.5 and sexually_explicit < 0.5
+
     return [
-        insult,
-        severe_toxicity,
-        toxicity,
+        float(non_toxic),
+        toxic,
         profanity,
         sexually_explicit,
-        flirtation,
-        identity_attack,
-        threat
     ]
 
 
@@ -98,24 +92,25 @@ class AffectDataset(Dataset):
 
             # Create affect vector from row
             affect = create_affect_vector(
-                row.toxicity,
-                row.severe_toxicity,
-                row.identity_attack,
-                row.insult,
-                row.threat,
-                row.profanity,
-                row.sexually_explicit,
-                row.flirtation
+                toxic=row.toxicity,
+                profanity=row.profanity,
+                sexually_explicit=row.sexually_explicit
             )
-            affect = np.array(affect).round().astype(int).tolist()
 
             examples.append((tokens, affect))
 
         return examples
 
     @staticmethod
-    def load_perspective_rows(row_limit=5_500) -> pd.DataFrame:
-        logger.info(f"Querying {row_limit} rows from perspective database")
+    def load_perspective_rows(num_rows=10_000) -> pd.DataFrame:
+        # TODO: try different learning rates
+        # TODO: try higher percent toxic
+        # TODO: try splitting into 8 subsets and concat them (1 for each perspective attribute)
+        # TODO: keep using 5k rows
+        # TODO: debug with just 2 classes
+        #  [1, 0] or [0, 1] (toxic / nontoxic)
+
+        logger.info(f"Querying {num_rows} rows from perspective database")
         session = perspective_db_session()
 
         base_query = (
@@ -124,30 +119,31 @@ class AffectDataset(Dataset):
                 .filter(SpanScore.end - SpanScore.begin < 2048)
         )
 
-        percent_toxic = 0.1
-        num_toxic_rows = int(row_limit * percent_toxic)
-
-        toxic_query = (
-            base_query
-                .filter(SpanScore.toxicity > 0.5)
-                .order_by(random())
-                .limit(num_toxic_rows)
-        )
+        num_rows_per_attribute = num_rows // 4
 
         non_toxic_query = (
             base_query
-                .filter(SpanScore.toxicity <= 0.5)
+                .filter(SpanScore.toxicity < 0.5)
+                .filter(SpanScore.profanity < 0.5)
+                .filter(SpanScore.sexually_explicit < 0.5)
                 .order_by(random())
-                .limit(row_limit - num_toxic_rows)
+                .limit(num_rows_per_attribute)
         )
-
-        toxic_df = pd.read_sql(toxic_query.statement, con=toxic_query.session.bind)
         non_toxic_df = pd.read_sql(non_toxic_query.statement, con=non_toxic_query.session.bind)
-        df = toxic_df.append(non_toxic_df)
 
-        # Check DataFrame
+        attribute_dfs = []
+        for attribute in [SpanScore.toxicity, SpanScore.profanity, SpanScore.sexually_explicit]:
+            attribute_query = (
+                base_query
+                    .filter(attribute > 0.5)
+                    .order_by(random())
+                    .limit(num_rows_per_attribute)
+            )
+            attribute_df = pd.read_sql(attribute_query.statement, con=attribute_query.session.bind)
+            attribute_dfs.append(attribute_df)
+
         span_score_pk = primary_key(SpanScore)
-        assert not df.duplicated(subset=span_score_pk).any()
-        assert len(df) == row_limit
+        df = pd.concat(attribute_dfs + [non_toxic_df]).drop_duplicates(subset=span_score_pk)
+        logger.info(f"Returned dataset from {len(df)} rows")
 
         return df
