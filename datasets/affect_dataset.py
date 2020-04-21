@@ -22,12 +22,10 @@ logger = logging.getLogger(__name__)
 NUM_AFFECTS = 4
 
 
-def create_affect_vector(toxic: float = 0.,
+def create_affect_vector(non_toxic: float = 0.,
+                         toxic: float = 0.,
                          profanity: float = 0.,
                          sexually_explicit: float = 0.) -> List[float]:
-    # TODO: try using just a 2-dim vector here
-    non_toxic = toxic < 0.5 and profanity < 0.5 and sexually_explicit < 0.5
-
     return [
         float(non_toxic),
         toxic,
@@ -91,7 +89,20 @@ class AffectDataset(Dataset):
             tokens = tokenizer.encode(text, max_length=block_size)
 
             # Create affect vector from row
+            attributes = [
+                row.insult,
+                row.severe_toxicity,
+                row.toxicity,
+                row.profanity,
+                row.sexually_explicit,
+                row.flirtation,
+                row.identity_attack,
+                row.threat
+            ]
+            non_toxic = float(np.array(attributes).mean())
+
             affect = create_affect_vector(
+                non_toxic=non_toxic,
                 toxic=row.toxicity,
                 profanity=row.profanity,
                 sexually_explicit=row.sexually_explicit
@@ -102,14 +113,7 @@ class AffectDataset(Dataset):
         return examples
 
     @staticmethod
-    def load_perspective_rows(num_rows=10_000) -> pd.DataFrame:
-        # TODO: try different learning rates
-        # TODO: try higher percent toxic
-        # TODO: try splitting into 8 subsets and concat them (1 for each perspective attribute)
-        # TODO: keep using 5k rows
-        # TODO: debug with just 2 classes
-        #  [1, 0] or [0, 1] (toxic / nontoxic)
-
+    def load_perspective_rows(num_rows=100_000) -> pd.DataFrame:
         logger.info(f"Querying {num_rows} rows from perspective database")
         session = perspective_db_session()
 
@@ -123,13 +127,19 @@ class AffectDataset(Dataset):
 
         non_toxic_query = (
             base_query
+                .filter(SpanScore.insult < 0.5)
+                .filter(SpanScore.severe_toxicity < 0.5)
                 .filter(SpanScore.toxicity < 0.5)
                 .filter(SpanScore.profanity < 0.5)
                 .filter(SpanScore.sexually_explicit < 0.5)
+                .filter(SpanScore.flirtation < 0.5)
+                .filter(SpanScore.identity_attack < 0.5)
+                .filter(SpanScore.threat < 0.5)
                 .order_by(random())
                 .limit(num_rows_per_attribute)
         )
         non_toxic_df = pd.read_sql(non_toxic_query.statement, con=non_toxic_query.session.bind)
+        print(f"Num non-toxic examples: {len(non_toxic_df)}")
 
         attribute_dfs = []
         for attribute in [SpanScore.toxicity, SpanScore.profanity, SpanScore.sexually_explicit]:
