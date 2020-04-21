@@ -25,7 +25,7 @@ from utils.utils import batchify
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
 # Generation hyperparameters
-GENERATION_BATCH_SIZE = 128
+GENERATION_BATCH_SIZE = 256
 
 # Span constants
 MIN_SPAN_LEN = 64
