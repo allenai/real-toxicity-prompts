@@ -130,6 +130,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         'max_gen_len': max_gen_len,
         'num_gen_per_prompt': num_gen_per_prompt,
         'model': repr(generator),
+        'generation_batch_size': GENERATION_BATCH_SIZE
     }
 
     if out_dir.exists():
