@@ -1,5 +1,7 @@
+import itertools
 import json
 import logging
+import math
 from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import List, Dict
@@ -20,21 +22,22 @@ from utils.db import SpanScore, perspective_db_session
 from utils.generation import GPT2Generator
 from utils.utils import batchify
 
-SENTINEL = 'STOP'
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
+
+# Generation hyperparameters
+GENERATION_BATCH_SIZE = 128
 
 # Span constants
 MIN_SPAN_LEN = 64
 MAX_SPAN_LEN = 1024
 MAX_PROMPT_LEN = 128
 
-# Generation hyperparameters
-GENERATION_BATCH_SIZE = 25
+SENTINEL = 'STOP'
 
 
 class PerspectiveWorker:
-    def __init__(self, out_file: Path, total: int, requests_handled=None):
-        self.requests_handled = requests_handled or set()
+    def __init__(self, out_file: Path, total: int, requests_handled: Dict = None):
+        self.requests_handled = requests_handled or {}
 
         # Setup worker thread
         self.task_queue = Queue()
@@ -50,7 +53,8 @@ class PerspectiveWorker:
 
     def get_responses(self) -> List[dict]:
         self.task_queue.put(SENTINEL)
-        return self.done_queue.get()
+        current_responses = self.done_queue.get()
+        return list(self.requests_handled.values()) + current_responses
 
     @staticmethod
     def perspective_worker(input: Queue, output: Queue, responses_file: Path, total: int):
@@ -102,26 +106,11 @@ def preprocess_data(df: pd.DataFrame, n: int) -> pd.DataFrame:
     return df
 
 
-def generate_with_prompt(prompt: str,
-                         generator: GPT2Generator,
-                         max_len: int,
-                         num_return_sequences: int) -> List[str]:
-    generations = []
-    for i in range(0, num_return_sequences, GENERATION_BATCH_SIZE):
-        batch_gen = generator.generate_multiple(
-            prompt,
-            max_len=max_len,
-            num_return_sequences=min(num_return_sequences - i, GENERATION_BATCH_SIZE)
-        )
-        generations.extend(batch_gen)
-    return generations
-
-
 def create_ngrams_dataset(df: pd.DataFrame,
                           out_dir: Path,
                           generator: GPT2Generator,
-                          max_gen_len: int = 20,
-                          num_gen_per_prompt: int = 25,
+                          max_gen_len: int,
+                          num_gen_per_prompt: int,
                           enable_generation: bool = True,
                           enable_perspective: bool = True) -> pd.DataFrame:
     # Store locations of output files
@@ -158,22 +147,20 @@ def create_ngrams_dataset(df: pd.DataFrame,
     perspective = None
     if enable_perspective:
         # Resume perspective
-        requests_completed = None
+        requests_completed = {}
         if perspective_file.exists():
-            requests_completed = set()
             with perspective_file.open() as f:
                 for line in f:
                     # TODO: doesn't handle malformed lines
                     response = json.loads(line)
-                    request_id = response['request_id']
-                    requests_completed.add(request_id)
+                    requests_completed[response['request_id']] = response
             print(f'Resuming perspective ({len(requests_completed)} already completed)...')
 
         num_perspective_requests = sum([
             len(df) if 'prompt_toxicity' not in df else 0,
             len(df) if 'continuation_toxicity' not in df else 0,
             len(df) * num_gen_per_prompt if enable_generation and 'generation_toxicity' not in df else 0
-        ])
+        ]) - len(requests_completed)
         perspective = PerspectiveWorker(perspective_file, num_perspective_requests, requests_completed)
 
         if 'prompt_toxicity' not in df:
@@ -186,26 +173,28 @@ def create_ngrams_dataset(df: pd.DataFrame,
 
     # Generate
     if enable_generation and 'generations' not in df:
-        generations = []
+        generation_batches = []
 
         # Resume generation
         if generations_file.exists():
             with generations_file.open() as f:
                 for line in f:
                     # TODO: doesn't handle malformed lines
-                    generations.append(json.loads(line))
-            print(f'Resuming generation ({len(generations)} already computed)...')
+                    generation_batches.append(json.loads(line))
+            print(f'Resuming generation ({len(generation_batches)} batches already computed)...')
 
-        num_generations = len(df.prompt) - len(generations)
-        for batch_i, prompt in tqdm(enumerate(df.prompt), total=num_generations, desc='Generation', dynamic_ncols=True,
-                                    position=1):
-            if batch_i < len(generations):
+        repeated_prompts = df.prompt.repeat(num_gen_per_prompt)
+        for batch_i, prompt in tqdm(enumerate(batchify(repeated_prompts, GENERATION_BATCH_SIZE)),
+                                    total=math.ceil(len(repeated_prompts) / GENERATION_BATCH_SIZE),
+                                    desc=f'Generation (batch size {GENERATION_BATCH_SIZE})',
+                                    dynamic_ncols=True):
+            if batch_i < len(generation_batches):
                 # Handle generations already computed
-                batch = generations[batch_i]
+                batch = generation_batches[batch_i]
             else:
                 # Generate
-                batch = generate_with_prompt(prompt, generator, max_gen_len, num_gen_per_prompt)
-                generations.append(batch)
+                batch = generator.generate(prompt, max_gen_len)
+                generation_batches.append(batch)
                 with generations_file.open('a') as f:
                     print(json.dumps(batch), file=f)
 
@@ -214,7 +203,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
                 for i, generation in enumerate(batch):
                     perspective.add_request(f'generation-{batch_i},{i}', generation)
 
-        df['generation'] = generations
+        df['generation'] = list(batchify(itertools.chain.from_iterable(generation_batches), num_gen_per_prompt))
 
     # Extract toxicity scores from perspective responses
     if enable_perspective:
@@ -310,19 +299,22 @@ def run_experiments():
             'df': n_50_percent_df,
             'model_path': finetune_dir / 'finetune_toxicity_percentile_lte2' / 'finetune_output',
             'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_lte2',
-            'num_gen_per_prompt': 25
+            'num_gen_per_prompt': 25,
+            'max_gen_len': 50
         },
         {
             'df': n_50_percent_df,
             'model_path': finetune_dir / 'finetune_toxicity_percentile_middle_20_subsample' / 'finetune_output',
             'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_middle_20_subsample',
-            'num_gen_per_prompt': 25
+            'num_gen_per_prompt': 25,
+            'max_gen_len': 50
         },
         {
             'df': n_50_percent_df,
             'model_path': finetune_dir / 'finetune_toxicity_percentile_gte99' / 'finetune_output',
             'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_gte99',
-            'num_gen_per_prompt': 25
+            'num_gen_per_prompt': 25,
+            'max_gen_len': 50
         },
     ]
 
@@ -334,6 +326,45 @@ def run_experiments():
         except FileExistsError as e:
             print(e)
             print('Skipping experiment...')
+        torch.cuda.empty_cache()
+
+
+def test_experiment(tmp_path):
+    prompts_dir = OUTPUT_DIR / 'prompts'
+
+    df = pd.read_pickle(prompts_dir / 'datasets' / 'prompts_n_50percent.pkl')
+    generator = GPT2Generator()
+
+    num_gen_per_prompt = 5
+
+    # Try generating with some (must be multiple of batch size for the purposes of this test)
+    df_len_1 = GENERATION_BATCH_SIZE * 1
+    df_1 = df.head(df_len_1).copy()
+    out_df = create_ngrams_dataset(df_1, tmp_path, generator, max_gen_len=20, num_gen_per_prompt=num_gen_per_prompt)
+    assert df_len_1 == len(out_df)
+    assert num_gen_per_prompt == len(out_df.generation[0])
+
+    # Test partial files
+    with open(tmp_path / 'generations.jsonl') as f:
+        num_generations = 0
+        for line in f:
+            batch = json.loads(line)
+            num_generations += len(batch)
+            assert GENERATION_BATCH_SIZE >= len(batch)
+        assert df_len_1 * num_gen_per_prompt == num_generations
+
+    with open(tmp_path / 'perspective.jsonl') as f:
+        assert df_len_1 * num_gen_per_prompt == len(f.readlines())
+
+    # Remove dataset file
+    (tmp_path / 'dataset.pkl').unlink()
+
+    # Try resuming with more
+    df_len_2 = df_len_1 + 75
+    df_2 = df.head(df_len_2).copy()
+    out_df_2 = create_ngrams_dataset(df_2, tmp_path, generator, max_gen_len=50, num_gen_per_prompt=num_gen_per_prompt)
+    assert df_len_2 == len(out_df_2)
+    assert len(out_df.generation[0]) == num_gen_per_prompt
 
 
 if __name__ == '__main__':
