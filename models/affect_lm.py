@@ -35,9 +35,12 @@ class Affect(nn.Module):
 
 
 class AffectGPT2LMHeadModel(GPT2LMHeadModel):
+    affect_labels: torch.Tensor
+
     def __init__(self, config):
         super().__init__(config)
         self.affect = Affect(NUM_AFFECTS, config.vocab_size)
+        self.affect_labels = None
 
     def freeze_transformer(self):
         for p in self.transformer.parameters():
@@ -46,6 +49,10 @@ class AffectGPT2LMHeadModel(GPT2LMHeadModel):
     def freeze_lm_head(self):
         for p in self.lm_head.parameters():
             p.requires_grad = False
+
+    def set_affect_labels(self, affect_labels: torch.Tensor):
+        print("Using static affect labels:", affect_labels)
+        self.affect_labels = affect_labels
 
     def forward(
             self,
@@ -71,6 +78,9 @@ class AffectGPT2LMHeadModel(GPT2LMHeadModel):
         hidden_states = transformer_outputs[0]
 
         lm_logits = self.lm_head(hidden_states)
+
+        if affect_labels is None and self.affect_labels is not None:
+            affect_labels = self.affect_labels.repeat(len(input_ids), 1, 1)
 
         if affect_labels is not None and self.affect is not None:
             # Add affect logits to lm logits
