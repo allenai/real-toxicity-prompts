@@ -58,7 +58,7 @@ class PerspectiveWorker:
 
     @staticmethod
     def perspective_worker(input: Queue, output: Queue, responses_file: Path, total: int):
-        pbar = tqdm(total=total, dynamic_ncols=True)
+        pbar = tqdm(total=total, dynamic_ncols=True, position=1)
         responses = perspective_api_request(iter(input.get, SENTINEL), responses_file=responses_file, pbar=pbar)
         output.put(responses)
 
@@ -112,7 +112,9 @@ def create_ngrams_dataset(df: pd.DataFrame,
                           max_gen_len: int,
                           num_gen_per_prompt: int,
                           enable_generation: bool = True,
-                          enable_perspective: bool = True) -> pd.DataFrame:
+                          enable_perspective: bool = True,
+                          query: str = None,
+                          model_path: Path = None) -> pd.DataFrame:
     # Store locations of output files
     config_file = out_dir / 'config.txt'
     perspective_file = out_dir / 'perspective.jsonl'
@@ -121,6 +123,8 @@ def create_ngrams_dataset(df: pd.DataFrame,
 
     # Create config
     config = {
+        'query': str(query),
+        'model_path': str(model_path),
         'enable_generation': enable_generation,
         'enable_perspective_requests': enable_perspective,
         'max_gen_len': max_gen_len,
@@ -143,9 +147,22 @@ def create_ngrams_dataset(df: pd.DataFrame,
             json.dump(config, f)
 
     print(f'Running experiment with outputs in {out_dir}...')
+    df = df.copy()
+    print('Total rows:', len(df))
 
     perspective = None
     if enable_perspective:
+        num_perspective_requests = 0
+        if 'prompt_toxicity' not in df:
+            print('Preparing prompts for perspective...')
+            num_perspective_requests += len(df)
+        if 'continuation_toxicity' not in df:
+            print('Preparing continuations for perspective...')
+            num_perspective_requests += len(df)
+        if enable_generation and 'generation_toxicity' not in df:
+            print(f'Preparing generations for perspective ({num_gen_per_prompt} generations per prompt)...')
+            num_perspective_requests += len(df) * num_gen_per_prompt
+
         # Resume perspective
         requests_completed = {}
         if perspective_file.exists():
@@ -155,12 +172,9 @@ def create_ngrams_dataset(df: pd.DataFrame,
                     response = json.loads(line)
                     requests_completed[response['request_id']] = response
             print(f'Resuming perspective ({len(requests_completed)} already completed)...')
+            num_perspective_requests -= len(requests_completed)
 
-        num_perspective_requests = sum([
-            len(df) if 'prompt_toxicity' not in df else 0,
-            len(df) if 'continuation_toxicity' not in df else 0,
-            len(df) * num_gen_per_prompt if enable_generation and 'generation_toxicity' not in df else 0
-        ]) - len(requests_completed)
+        # Create perspective worker thread
         perspective = PerspectiveWorker(perspective_file, num_perspective_requests, requests_completed)
 
         if 'prompt_toxicity' not in df:
