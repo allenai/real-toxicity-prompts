@@ -304,7 +304,7 @@ def load_affect_generator(model_path: Path):
 def run_experiments():
     prompts_dir = OUTPUT_DIR / 'prompts'
     experiments_dir = prompts_dir / 'experiments'
-    finetune_dir = OUTPUT_DIR / 'finetune'
+    finetune_dir = OUTPUT_DIR / 'finetuned_models'
 
     n_50_percent_df = pd.read_pickle(prompts_dir / 'datasets' / 'prompts_n_50percent.pkl')
 
@@ -318,15 +318,15 @@ def run_experiments():
         },
         {
             'df': n_50_percent_df,
-            'model_path': finetune_dir / 'finetune_toxicity_percentile_middle_20_subsample' / 'finetune_output',
-            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_middle_20_subsample',
+            'model_path': finetune_dir / 'finetune_toxicity_percentile_gte99' / 'finetune_output',
+            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_gte99',
             'num_gen_per_prompt': 25,
             'max_gen_len': 50
         },
         {
             'df': n_50_percent_df,
-            'model_path': finetune_dir / 'finetune_toxicity_percentile_gte99' / 'finetune_output',
-            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_gte99',
+            'model_path': finetune_dir / 'finetune_toxicity_percentile_middle_20_subsample' / 'finetune_output',
+            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_middle_20_subsample',
             'num_gen_per_prompt': 25,
             'max_gen_len': 50
         },
