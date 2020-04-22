@@ -5,6 +5,7 @@ from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import List, Dict
 
+import click
 import pandas as pd
 import spacy
 import torch
@@ -305,48 +306,6 @@ def load_affect_generator(model_path: Path):
     return generator
 
 
-def run_experiments():
-    prompts_dir = OUTPUT_DIR / 'prompts'
-    experiments_dir = prompts_dir / 'experiments'
-    finetune_dir = OUTPUT_DIR / 'finetuned_models'
-
-    n_50_percent_df = pd.read_pickle(prompts_dir / 'datasets' / 'prompts_n_50percent.pkl')
-
-    experiment_kwargs = [
-        {
-            'df': n_50_percent_df,
-            'model_path': finetune_dir / 'finetune_toxicity_percentile_lte2' / 'finetune_output',
-            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_lte2',
-            'num_gen_per_prompt': 25,
-            'max_gen_len': 50
-        },
-        {
-            'df': n_50_percent_df,
-            'model_path': finetune_dir / 'finetune_toxicity_percentile_gte99' / 'finetune_output',
-            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_gte99',
-            'num_gen_per_prompt': 25,
-            'max_gen_len': 50
-        },
-        {
-            'df': n_50_percent_df,
-            'model_path': finetune_dir / 'finetune_toxicity_percentile_middle_20_subsample' / 'finetune_output',
-            'out_dir': experiments_dir / 'prompts_n_50percent_finetune_toxicity_percentile_middle_20_subsample',
-            'num_gen_per_prompt': 25,
-            'max_gen_len': 50
-        },
-    ]
-
-    for kwargs in experiment_kwargs:
-        model = GPT2LMHeadModel.from_pretrained(kwargs['model_path'])
-        generator = GPT2Generator(model)
-        try:
-            create_ngrams_dataset(generator=generator, **kwargs)
-        except FileExistsError as e:
-            print(e)
-            print('Skipping experiment...')
-        torch.cuda.empty_cache()
-
-
 def test_experiment(tmp_path):
     prompts_dir = OUTPUT_DIR / 'prompts'
 
@@ -403,5 +362,43 @@ def test_experiment(tmp_path):
     assert len(out_df.generation[0]) == num_gen_per_prompt
 
 
+@click.command()
+@click.option('--model_name', required=True, type=str, help='model name in finetuned models dir')
+@click.option('--gen_batch_size', required=True, type=int, help='batch size for generation (try 256)')
+@click.option('--perspective_rps', required=True, type=int, help='Perspective API rate limit (up to 25)')
+@click.option('--dataset_name', default='prompts_n_50percent')
+@click.option('--num_gen_per_prompt', default=25)
+@click.option('--max_gen_len', default=20)
+def run_finetuned_experiment(
+        model_name: str,
+        gen_batch_size: int,
+        perspective_rps: int,
+        dataset_name: str,
+        num_gen_per_prompt: int,
+        max_gen_len: int,
+):
+    # Find directories
+    prompts_dir = OUTPUT_DIR / 'prompts'
+    experiments_dir = prompts_dir / 'experiments'
+    finetune_dir = OUTPUT_DIR / 'finetuned_models'
+    out_dir = experiments_dir / f'{dataset_name}_{model_name}'
+
+    # Load dataset and model
+    df = pd.read_pickle(prompts_dir / 'datasets' / f'{dataset_name}.pkl')
+    model_path = finetune_dir / model_name / 'finetune_output'
+    model = GPT2LMHeadModel.from_pretrained(model_path)
+    generator = GPT2Generator(model)
+
+    # Run experiment!
+    create_ngrams_dataset(df=df,
+                          out_dir=out_dir,
+                          generator=generator,
+                          model_path=model_path,
+                          num_gen_per_prompt=num_gen_per_prompt,
+                          max_gen_len=max_gen_len,
+                          gen_batch_size=gen_batch_size,
+                          perspective_rps=perspective_rps)
+
+
 if __name__ == '__main__':
-    run_experiments()
+    run_finetuned_experiment()
