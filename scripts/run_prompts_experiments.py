@@ -217,7 +217,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
             for generation in batch:
                 generations.append(generation)
                 with generations_file.open('a') as f:
-                    print(json.dumps(batch), file=f)
+                    print(json.dumps(generation), file=f)
                 if enable_perspective:
                     perspective.add_request(f'generation-{i}', generation)
                 i += 1
