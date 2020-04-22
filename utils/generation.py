@@ -65,6 +65,9 @@ class GPT2Generator:
         attn_mask = encodings_dict['attention_mask'].to(self.device)
         batch_size, input_seq_len = input_ids.shape
 
+        # Add input_seq_len to max_len so we don't get really short generations
+        max_len += input_seq_len
+
         position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
         eos_not_in_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
