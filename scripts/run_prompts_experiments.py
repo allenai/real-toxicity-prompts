@@ -133,15 +133,19 @@ def create_ngrams_dataset(df: pd.DataFrame,
         'generation_batch_size': GENERATION_BATCH_SIZE
     }
 
-    if out_dir.exists():
-        if config_file.exists() and json.load(config_file.open()) != config:
-            raise FileExistsError(f'Config file already exists and does not match current config: {config_file}')
+    if out_dir.exists() and list(out_dir.iterdir()):
+        # out_dir exists and has files
+        if not config_file.exists():
+            raise FileNotFoundError(f'Cannot resume experiment to output dir missing config file: {out_dir}')
+
+        if json.load(config_file.open()) != config:
+            raise FileExistsError(f'Config file does does not match current config: {config_file}')
 
         if dataset_file.exists():
             raise FileExistsError(f'Dataset already created: {dataset_file}')
     else:
-        # Make directory
-        out_dir.mkdir(parents=True)
+        # Make directory if needed
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         # Save config
         with config_file.open('w') as f:
