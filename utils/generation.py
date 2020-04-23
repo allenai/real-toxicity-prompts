@@ -62,25 +62,21 @@ class GPT2Generator:
         encodings_dict = self.tokenizer.batch_encode_plus(prompt, pad_to_max_length=True, return_tensors='pt')
 
         input_ids = encodings_dict['input_ids'].to(self.device)
-        attn_mask = encodings_dict['attention_mask'].to(self.device)
+        attention_mask = encodings_dict['attention_mask'].to(self.device)
         batch_size, input_seq_len = input_ids.shape
 
         position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
-        eos_not_in_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
-
-        # TODO: use this to speed up generation
-        past = None
+        unfinished_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
         self.model.eval()
-
         with torch.no_grad():
             for step in range(max_len):
-                logits, past = self.model(input_ids, attention_mask=attn_mask, position_ids=position_ids,
+                logits, past = self.model(input_ids, attention_mask=attention_mask, position_ids=position_ids,
                                           **model_kwargs)
 
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:
-                    last_non_masked_idx = torch.sum(attn_mask, dim=1) - 1
+                    last_non_masked_idx = torch.sum(attention_mask, dim=1) - 1
                     next_token_logits = logits[range(batch_size), last_non_masked_idx, :]
                 else:
                     next_token_logits = logits[:, -1, :]
@@ -98,16 +94,21 @@ class GPT2Generator:
                     # Greedy decoding
                     next_tokens = torch.argmax(next_token_logits, dim=-1)
 
-                # this updates which sentences have not seen an <EOS> token so far
-                # if one <EOS> token was seen the sentence is finished
-                eos_not_in_sents.mul_(next_tokens.ne(self.tokenizer.eos_token_id).long())
-
                 # either append a padding token here if <EOS> has been seen or append next token
-                tokens_to_add = next_tokens * eos_not_in_sents + self.tokenizer.pad_token_id * (1 - eos_not_in_sents)
+                tokens_to_add = next_tokens * unfinished_sents + self.tokenizer.pad_token_id * (1 - unfinished_sents)
 
-                # Update input_ids, attn_mask and position_ids
+                # this updates which sentences have not seen an EOS token so far
+                # if one EOS token was seen the sentence is finished
+                eos_in_sents = tokens_to_add == self.tokenizer.eos_token_id
+                unfinished_sents.mul_((~eos_in_sents).long())
+
+                # stop when there is an EOS in each sentence
+                if unfinished_sents.max() == 0:
+                    break
+
+                # Update input_ids, attention_mask and position_ids
                 input_ids = torch.cat([input_ids, tokens_to_add.unsqueeze(-1)], dim=-1)
-                attn_mask = torch.cat([attn_mask, attn_mask.new_ones((batch_size, 1))], dim=1)
+                attention_mask = torch.cat([attention_mask, attention_mask.new_ones((batch_size, 1))], dim=1)
                 position_ids = torch.cat([position_ids, (position_ids[:, -1] + 1).unsqueeze(-1)], dim=1)
 
         decoded_outputs = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
