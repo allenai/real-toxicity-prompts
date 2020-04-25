@@ -171,7 +171,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         requests_completed = {}
         if perspective_file.exists():
             with perspective_file.open() as f:
-                for line in f:
+                for line in tqdm(f, desc='Loading saved perspective responses'):
                     # TODO: doesn't handle malformed lines
                     response = json.loads(line)
                     requests_completed[response['request_id']] = response
@@ -198,7 +198,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         # Resume generation
         if generations_file.exists():
             with generations_file.open() as f:
-                for line in f:
+                for line in tqdm(f, desc='Loading saved generations'):
                     generation = json.loads(line)
                     generations.append(generation)
                     if enable_perspective:
