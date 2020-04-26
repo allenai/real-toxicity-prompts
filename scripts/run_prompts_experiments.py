@@ -206,6 +206,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
                     i += 1
             print(f'Resuming generation ({len(generations)} already computed)...')
 
+        df.prompt[89634:89636] = 'TEMP'
         prompts = df.prompt.repeat(num_gen_per_prompt)[len(generations):]
         for prompt in tqdm(batchify(prompts, gen_batch_size),
                            total=math.ceil(len(prompts) / gen_batch_size),
