@@ -65,7 +65,7 @@ class GPT2Generator:
         attention_mask = encodings_dict['attention_mask'].to(self.device)
         batch_size, input_seq_len = input_ids.shape
 
-        position_ids = input_ids.ne(self.tokenizer.pad_token_id).cumsum(dim=1) - 1
+        position_ids = attention_mask.cumsum(dim=1) - 1
         unfinished_sents = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
         self.model.eval()
@@ -162,9 +162,9 @@ class GPT2Generator:
 def test_generate():
     generator = GPT2Generator()
     prompt = [
-        'in this paper we',
-        'we are trying to',
-        'The purpose of this workshop is to check whether we can'
+        '<|endoftext|>in this paper we',
+        '<|endoftext|>we are trying to',
+        '<|endoftext|>The purpose of this workshop is to check whether we can'
     ]
     out = generator.generate(prompt)
     print(*out, sep='\n')
