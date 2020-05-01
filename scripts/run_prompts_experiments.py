@@ -1,33 +1,21 @@
 import json
 import logging
-import math
 from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import List, Dict
 
 import click
+import math
 import pandas as pd
-import spacy
-import torch
-from spacy.tokens.doc import Doc
 from tqdm.auto import tqdm
 from transformers import GPT2LMHeadModel
 
-from datasets.affect_dataset import create_affect_vector
-from models.affect_lm import AffectGPT2LMHeadModel
-from scripts.create_db import unpack_scores
 from scripts.perspective_api_request import perspective_api_request
-from utils.constants import TEXTS_DIR, OUTPUT_DIR, PERSPECTIVE_DB
-from utils.db import SpanScore, perspective_db_session
+from utils.constants import OUTPUT_DIR
 from utils.generation import GPT2Generator
 from utils.utils import batchify
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
-
-# Span constants
-MIN_SPAN_LEN = 64
-MAX_SPAN_LEN = 1024
-MAX_PROMPT_LEN = 128
 
 SENTINEL = 'STOP'
 
@@ -59,49 +47,6 @@ class PerspectiveWorker:
         responses = perspective_api_request(iter(input.get, SENTINEL), responses_file=responses_file, pbar=pbar,
                                             requests_per_second=rps)
         output.put(responses)
-
-
-def extract_toxicity_scores(response_dicts: List[dict]) -> Dict[str, List[float]]:
-    scores = {}
-    for response_dict in response_dicts:
-        response_col = response_dict['request_id'].split('-')[0]
-        response = response_dict['response']
-        if response:
-            summary_scores, span_scores = unpack_scores(response)
-            toxicity = summary_scores['toxicity']
-        else:
-            toxicity = None
-        scores.setdefault(response_col, []).append(toxicity)
-    return scores
-
-
-def split_prompt(doc: Doc, n: int):
-    if isinstance(n, float):
-        # TODO: round n rather than flooring it
-        n = int(n * len(doc))
-
-    # Split text into prompt and continuation
-    prompt = str(doc[:n])
-    continuation = str(doc)[len(prompt):]  # Rather than taking remaining tokens, take the remainder of the string
-    if len(prompt) == 0 or len(continuation) == 0 or len(prompt) > MAX_PROMPT_LEN:
-        return None
-
-    return prompt, continuation
-
-
-def preprocess_data(df: pd.DataFrame, n: int) -> pd.DataFrame:
-    if 'prompt' in df and 'continuation' in df:
-        return df
-
-    # Split data
-    print(f"Splitting spans into (prompt, continuation) pairs with n={n}...")
-    df = df[df.examples.notna()]
-    split_spans = df.examples.apply(lambda x: split_prompt(x, n))
-    df = df[split_spans.notna()]
-    df['prompt'], df['continuation'] = zip(*split_spans.dropna())
-    df.drop(columns='examples')
-    print(f'Limited to {len(df)} rows after preprocessing')
-    return df
 
 
 def create_ngrams_dataset(df: pd.DataFrame,
@@ -151,7 +96,6 @@ def create_ngrams_dataset(df: pd.DataFrame,
             json.dump(config, f)
 
     print(f'Running experiment with outputs in {out_dir}...')
-    df = df.copy()
     print('Total rows:', len(df))
 
     perspective = None
@@ -171,7 +115,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         requests_completed = {}
         if perspective_file.exists():
             with perspective_file.open() as f:
-                for line in f:
+                for line in tqdm(f, desc='Loading saved perspective responses'):
                     # TODO: doesn't handle malformed lines
                     response = json.loads(line)
                     requests_completed[response['request_id']] = response
@@ -198,7 +142,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
         # Resume generation
         if generations_file.exists():
             with generations_file.open() as f:
-                for line in f:
+                for line in tqdm(f, desc='Loading saved generations'):
                     generation = json.loads(line)
                     generations.append(generation)
                     if enable_perspective:
@@ -221,145 +165,6 @@ def create_ngrams_dataset(df: pd.DataFrame,
                 if enable_perspective:
                     perspective.add_request(f'generation-{i}', generation)
                 i += 1
-
-        df['generation'] = list(batchify(generations, num_gen_per_prompt))
-
-    # Extract toxicity scores from perspective responses
-    if enable_perspective:
-        response_dicts = perspective.get_responses()
-
-        for request_column, scores in extract_toxicity_scores(response_dicts).items():
-            score_column = f'{request_column}_toxicity'
-            assert score_column not in df
-            if request_column == 'generation':
-                scores = list(batchify(scores, num_gen_per_prompt))
-            df[score_column] = scores
-
-    # Save data
-    df.to_pickle(dataset_file)
-    return df
-
-
-def load_span_example(row: pd.Series, nlp):
-    # Load text from file
-    text_file = TEXTS_DIR / row.filename
-    try:
-        text = text_file.read_text(encoding='utf-8', errors='strict')
-    except UnicodeDecodeError:
-        return None
-
-    # Trim text
-    text = text[row.begin:row.end].strip()
-    if not (MIN_SPAN_LEN <= len(text) <= MAX_SPAN_LEN):
-        return None
-
-    # Tokenize text
-    doc = nlp(text)
-    return doc
-
-
-def load_features(cached_features_file: Path):
-    if cached_features_file.exists():
-        print("Loading cached features...")
-        df = pd.read_pickle(cached_features_file)
-    else:
-        session = perspective_db_session()
-        query = (
-            session.query(SpanScore)
-                .filter(SpanScore.toxicity >= .75)
-                .filter(SpanScore.end - SpanScore.begin >= MIN_SPAN_LEN)
-                .filter(SpanScore.end - SpanScore.begin <= MAX_SPAN_LEN)
-        )
-
-        if not PERSPECTIVE_DB.exists():
-            raise FileNotFoundError("Perspective database was not found. Try using a cached features file.")
-
-        # Load dataframe from query and select relevant columns
-        print("Reading from database...")
-        df = pd.read_sql(query.statement, con=query.session.bind)
-        df = df[['filename', 'begin', 'end', 'toxicity']]
-        print(f"Returned {len(df)} rows")
-
-        # Get prompts and continuations
-        print("Loading text and tokenizing...")
-        nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner', 'tagger'])
-        df['examples'] = df.apply(lambda row: load_span_example(row, nlp), axis=1)
-
-        df.to_pickle(cached_features_file)
-
-    return df
-
-
-# TODO: use this for affect generation
-def load_affect_generator(model_path: Path):
-    # Use AffectGPT2 for generation
-    affect_lm = AffectGPT2LMHeadModel.from_pretrained(model_path)
-    generator = GPT2Generator(affect_lm)
-
-    # Create non-toxic affect vector
-    affect_labels = torch.tensor(create_affect_vector(non_toxic=1.5), device=generator.device)
-    affect_lm.set_affect_labels(affect_labels)
-
-    # Set beta to 1
-    affect_lm.affect.beta = 1
-
-    return generator
-
-
-def test_experiment(tmp_path):
-    prompts_dir = OUTPUT_DIR / 'prompts'
-
-    df = pd.read_pickle(prompts_dir / 'datasets' / 'prompts_n_50percent.pkl')
-    generator = GPT2Generator()
-
-    num_gen_per_prompt = 5
-    perspective_rps = 25
-    max_gen_len = 20
-
-    # Try generating with some (must be multiple of batch size for the purposes of this test)
-    df_len_1 = 100
-    gen_batch_size = 50
-    df_1 = df.head(df_len_1)
-    out_df = create_ngrams_dataset(df_1,
-                                   tmp_path,
-                                   generator,
-                                   perspective_rps=perspective_rps,
-                                   gen_batch_size=gen_batch_size,
-                                   max_gen_len=max_gen_len,
-                                   num_gen_per_prompt=num_gen_per_prompt)
-    assert df_len_1 == len(out_df)
-    assert num_gen_per_prompt == len(out_df.generation[0])
-
-    # Test partial files
-    with open(tmp_path / 'generations.jsonl') as f:
-        num_generations = 0
-        for line in f:
-            gen = json.loads(line)
-            assert isinstance(gen, str)
-            num_generations += 1
-        assert df_len_1 * num_gen_per_prompt == num_generations
-
-    with open(tmp_path / 'perspective.jsonl') as f:
-        assert df_len_1 * num_gen_per_prompt == len(f.readlines())
-
-    # Remove dataset file
-    (tmp_path / 'dataset.pkl').unlink()
-
-    # CHANGE THE BATCH SIZE
-    gen_batch_size = 75
-
-    # Try resuming with more
-    df_len_2 = df_len_1 + 100
-    df_2 = df.head(df_len_2)
-    out_df_2 = create_ngrams_dataset(df_2,
-                                     tmp_path,
-                                     generator,
-                                     perspective_rps=perspective_rps,
-                                     gen_batch_size=gen_batch_size,
-                                     max_gen_len=max_gen_len,
-                                     num_gen_per_prompt=num_gen_per_prompt)
-    assert df_len_2 == len(out_df_2)
-    assert len(out_df.generation[0]) == num_gen_per_prompt
 
 
 @click.command()

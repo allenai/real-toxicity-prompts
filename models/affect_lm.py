@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
@@ -16,17 +18,24 @@ class Affect(nn.Module):
     beta in [1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0]
     """
 
+    IGNORE_IDS = [50256, 247, 251, 250]
+
     def __init__(self,
                  affect_dim: int,
                  vocab_size: int,
-                 beta: float = 1.0):
+                 beta: float = 1.0,
+                 ignore_special_tokens=False):
         super().__init__()
         self.beta = beta
+        self.ignore_special_tokens = ignore_special_tokens
         self.affect2vocab = nn.Linear(affect_dim, vocab_size, bias=True)
         self.init_weights()
 
     def forward(self, affect_labels: torch.Tensor) -> torch.Tensor:
-        return self.beta * self.affect2vocab(affect_labels)
+        out = self.affect2vocab(affect_labels)
+        if self.ignore_special_tokens:
+            out[:, :, self.IGNORE_IDS] = 0
+        return self.beta * out
 
     def init_weights(self, initializer_range=0.02):
         # initializer_range taken from GPT2Config
@@ -35,7 +44,7 @@ class Affect(nn.Module):
 
 
 class AffectGPT2LMHeadModel(GPT2LMHeadModel):
-    affect_labels: torch.Tensor
+    affect_labels: Optional[torch.Tensor]
 
     def __init__(self, config):
         super().__init__(config)
