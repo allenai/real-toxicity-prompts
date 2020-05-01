@@ -1,96 +1,55 @@
-# %%
 import json
-from pathlib import Path
-import pandas as pd
+
+import click
+from tqdm import tqdm
 
 from scripts.create_db import unpack_scores
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.utils import batchify
-from tqdm import tqdm
-
-# %%
-archive = Path('../archive')
-prompts = archive / 'prompts' / 'promptsv2' / 'prompts_n_50percent'
 
 
-# %%
-def load_scores(scores_file: Path):
-    scores = []
-    for line in tqdm(open(scores_file)):
-        response = json.loads(line)
-        if response:
-            summary_scores, _ = unpack_scores(response)
-        else:
-            summary_scores = None
-        scores.append(summary_scores)
-    return scores
-
-
-def load_scores_2(scores_file: Path):
-    scores = []
-    for line in tqdm(open(scores_file)):
-        response = json.loads(line)
-        if response['response']:
-            summary_scores, _ = unpack_scores(response['response'])
-        else:
-            summary_scores = None
-        scores.append(summary_scores)
-    return scores
-
-
-# %%
-df = pd.read_pickle('/data/language-model-toxicity/results/prompts/prompts_n_50percent_gpt2.pkl')
-og_df = pd.read_pickle(prompts / 'dataset.pkl')
-prompt_fix_df = pd.read_pickle(prompts / 'prompt_fix' / 'dataset.pkl')
-cont_fix_df = pd.read_pickle(prompts / 'cont_fix' / 'dataset.pkl')
-
-# %%
-prompt_scores = load_scores(prompts / 'prompts.jsonl')
-cont_scores = load_scores(prompts / 'continuations.jsonl')
-prompt_fix_scores = load_scores_2(prompts / 'prompt_fix' / 'responses.jsonl')
-cont_fix_scores = load_scores_2(prompts / 'cont_fix' / 'responses.jsonl')
-
-# %%
-og_df['prompt_responses'] = prompt_scores
-og_df['cont_responses'] = cont_scores
-prompt_fix_df['prompt_responses'] = prompt_fix_scores
-cont_fix_df['cont_responses'] = cont_fix_scores
-
-# %%
-prompt_responses = og_df['prompt_responses'].combine_first(prompt_fix_df['prompt_responses'])
-cont_responses = og_df['cont_responses'].combine_first(cont_fix_df['cont_responses'])
-
-# %%
-gen_file = Path(
-    archive / 'prompts/promptsv2/prompts_n_50percent_temp/prompts_n_50percent_gpt2_generations_perspective.jsonl'
-)
-gen_responses = load_scores_2(gen_file)
-
-
-# %%
-def format_subtable(response, text):
+def format_responses(response: dict, text: str):
     if not response:
         response = {x: None for x in PERSPECTIVE_API_ATTRIBUTES_LOWER}
     return {'text': text, **response}
 
 
-# %%
-with open('prompts-n50p-out.jsonl', 'a') as f:
-    for (i, row), prompt_response, cont_response, gen_response in tqdm(zip(df.iterrows(),
-                                                                           prompt_responses,
-                                                                           cont_responses,
-                                                                           batchify(gen_responses, 25)),
-                                                                       total=len(df)):
-        out = {
-            'filename': row.filename,
-            'begin': row.begin,
-            'end': row.end,
-            'prompt': format_subtable(prompt_response, row.prompt),
-            'continuation': format_subtable(cont_response, row.continuation),
-            'generations': [format_subtable(scores, gen) for gen, scores in zip(row.generation, gen_response)]
-        }
-        print(json.dumps(out), file=f)
+@click.command()
+@click.option('--dataset_file', required=True)
+@click.option('--generations_file', required=True)
+@click.option('--perspective_file', required=True)
+@click.option('--out_file', required=True)
+def collate_generations(dataset_file: str, generations_file: str, perspective_file: str, out_file: str):
+    with open(dataset_file) as f:
+        dataset = [json.loads(line) for line in tqdm(f)]
 
-# %%
-df = pd.read_json('prompts-n50p-out.jsonl', orient='records')
+    scores = []
+    with open(perspective_file) as f:
+        for line in tqdm(f):
+            response = json.loads(line)
+            if response['response']:
+                summary_scores, _ = unpack_scores(response['response'])
+            else:
+                summary_scores = None
+            scores.append(summary_scores)
 
+    with open(generations_file) as f:
+        generations = [json.loads(line) for line in tqdm(f)]
+    gens_per_prompt = len(generations) // len(dataset)
+
+    with open(out_file, 'a') as f:
+        rows_iter = zip(dataset, batchify(generations, gens_per_prompt), batchify(scores, gens_per_prompt))
+        for data, generations_batch, scores_batch, in tqdm(rows_iter, total=len(dataset)):
+            out = {
+                'filename': data['filename'],
+                'begin': data['begin'],
+                'end': data['end'],
+                'prompt': data['prompt'],
+                'continuation': data['continuation'],
+                'generations': [format_responses(scores, gen) for scores, gen in zip(scores_batch, generations_batch)]
+            }
+            print(json.dumps(out), file=f)
+
+
+if __name__ == '__main__':
+    collate_generations()
