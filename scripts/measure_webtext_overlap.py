@@ -5,21 +5,8 @@ from typing import Set
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
+from datasets.openwebtext_dataset import openwebtext_dataloader
 from utils.constants import DATA_DIR, TEXTS_DIR
-
-
-class OpenWebText(Dataset):
-    def __init__(self):
-        super().__init__()
-        print("Loading list of OpenWebText files...")
-        self.files = list(TEXTS_DIR.iterdir())
-
-    def __getitem__(self, idx):
-        file = self.files[idx]
-        return file.name, file.read_text(errors='ignore')
-
-    def __len__(self):
-        return len(self.files)
 
 
 def load_webtext() -> Set[str]:
@@ -44,8 +31,7 @@ def load_webtext() -> Set[str]:
 
 def main():
     webtext_set = load_webtext()
-    open_webtext_dataset = OpenWebText()
-    open_webtext_dataloader = DataLoader(open_webtext_dataset, num_workers=os.cpu_count(), collate_fn=lambda x: x[0])
+    open_webtext_dataloader = openwebtext_dataloader()
     count = sum(text in webtext_set
                 for filename, text
                 in tqdm(open_webtext_dataloader, desc='Comparing texts'))
