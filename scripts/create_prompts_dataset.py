@@ -4,6 +4,7 @@ from typing import Union
 import pandas as pd
 import spacy
 from spacy.tokens.doc import Doc
+from sqlalchemy.sql.functions import random
 
 from utils.constants import TEXTS_DIR, PERSPECTIVE_DB
 from utils.db import SpanScore, perspective_db_session
@@ -18,7 +19,7 @@ MAX_PROMPT_LEN = 128
 def split_prompt(doc: Doc, n: int):
     if isinstance(n, float):
         # TODO: round n rather than flooring it
-        n = int(n * len(doc))
+        n = round(n * len(doc))
 
     # Split text into prompt and continuation
     prompt = str(doc[:n])
@@ -48,8 +49,8 @@ def load_span_example(row: pd.Series, n: Union[int, float], nlp):
 
 
 @click.command()
-@click.option('--out_file', type=str)
-@click.option('--n', type=float)
+@click.option('--out_file', required=True, type=str)
+@click.option('--n', required=True, type=float)
 def create_prompts_dataset(out_file: str, n: float):
     out_file = Path(out_file)
     if out_file.exists():
@@ -60,9 +61,11 @@ def create_prompts_dataset(out_file: str, n: float):
     session = perspective_db_session()
     query = (
         session.query(SpanScore)
-            .filter(SpanScore.toxicity >= .75)
+            .filter(SpanScore.toxicity < 0.25)
             .filter(SpanScore.end - SpanScore.begin >= MIN_SPAN_LEN)
             .filter(SpanScore.end - SpanScore.begin <= MAX_SPAN_LEN)
+            .order_by(random())
+            .limit(30_000)
     )
 
     # Load dataframe from query and select relevant columns
@@ -80,6 +83,8 @@ def create_prompts_dataset(out_file: str, n: float):
     df = df[examples.notna()]
     df['prompt'], df['continuation'] = zip(*examples.dropna())
     print(f'Limited to {len(df)} rows after preprocessing')
+
+    df = df.head(25_000)
 
     df.to_pickle(out_file)
     return df
