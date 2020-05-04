@@ -80,12 +80,12 @@ def prepare_batch(batch: List[Document], offset: int):
         raise RuntimeError(f'Unexpected element type ({type(batch[0])} in batch for: {batch[0]}')
 
 
-def perspective_api_request(corpus: Union[Iterable[Document], Document],
+def perspective_api_request(corpus: Union[Iterable[Document], str],
                             responses_file: Optional[Path] = None,
                             api_key: str = PERSPECTIVE_API_KEY,
                             requests_per_second: int = 25,
                             pbar: tqdm = None) -> List[dict]:
-    if isinstance(corpus, collections.abc.Iterable):
+    if isinstance(corpus, str):
         corpus = [corpus]
 
     # Set up api
