@@ -1,11 +1,11 @@
 import json
 import logging
+import math
 from multiprocessing import Process, Queue
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict
 
 import click
-import math
 import pandas as pd
 from tqdm.auto import tqdm
 
