@@ -123,8 +123,7 @@ class GPT2Generator:
                           p: float = 0.9,
                           num_return_sequences: int = 1,
                           sample: bool = True,
-                          repetition_penalty: float = 1.0,
-                          include_prompt_in_output: bool = False):
+                          repetition_penalty: float = 1.0):
         max_len = adjust_length_to_model(max_len, max_sequence_length=self.model.config.max_position_embeddings)
 
         encoded_prompt = self.tokenizer.encode(prompt, add_special_tokens=False, return_tensors="pt")
@@ -149,11 +148,12 @@ class GPT2Generator:
 
         decoded_outputs = []
         for output in output_sequences:
+            output = output[prompt_len:]
             try:
                 stop_index = [i for i, x in enumerate(output) if x == self.tokenizer.eos_token_id][0]
             except IndexError:
                 stop_index = None
-            output = output[None if include_prompt_in_output else prompt_len:stop_index]
+            output = output[:stop_index]
             decoded_outputs.append(self.tokenizer.decode(output, clean_up_tokenization_spaces=True))
 
         return decoded_outputs
