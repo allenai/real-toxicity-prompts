@@ -2,16 +2,22 @@ name: lm-toxicity
 channels:
   - defaults
 dependencies:
-  - python=3.7
-  - pip
+  - python=3.8
 
+  - pip
   - pip:
+      - click
+      - nltk
       - tensorboard
       - tensorboardX
       - google-api-python-client
-      - git+git://github.com/thesamuel/transformers@language-model-toxicity
+      - git+git://github.com/thesamuel/transformers@lm-toxicity
+      - psaw
+      - spacy
+      - sqlalchemy
+      - torchtext
+      - tqdm
 
-  - click
   - dask
   - jupyterlab
   - matplotlib
@@ -19,7 +25,3 @@ dependencies:
   - pandas
   - pytorch
   - scikit-learn
-  - spacy
-  - sqlalchemy
-  - tqdm
-
