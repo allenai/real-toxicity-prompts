@@ -161,7 +161,7 @@ def perturb_past(
     loss_per_iter = []
     new_accumulated_hidden = None
     for i in range(num_iterations):
-        print("Iteration ", i + 1)
+        # print("Iteration ", i + 1)
         curr_perturbation = [
             to_var(torch.from_numpy(p_), requires_grad=True, device=device) for p_ in grad_accumulator
         ]
@@ -184,7 +184,7 @@ def perturb_past(
                 bow_loss = -torch.log(torch.sum(bow_logits))
                 loss += bow_loss
                 loss_list.append(bow_loss)
-            print(" pplm_bow_loss:", loss.data.cpu().numpy())
+            # print(" pplm_bow_loss:", loss.data.cpu().numpy())
 
         if loss_type == 2 or loss_type == 3:
             ce_loss = torch.nn.CrossEntropyLoss()
@@ -202,7 +202,7 @@ def perturb_past(
 
             label = torch.tensor(prediction.shape[0] * [class_label], device=device, dtype=torch.long)
             discrim_loss = ce_loss(prediction, label)
-            print(" pplm_discrim_loss:", discrim_loss.data.cpu().numpy())
+            # print(" pplm_discrim_loss:", discrim_loss.data.cpu().numpy())
             loss += discrim_loss
             loss_list.append(discrim_loss)
 
@@ -213,11 +213,11 @@ def perturb_past(
             correction = SMALL_CONST * (probs <= SMALL_CONST).float().to(device).detach()
             corrected_probs = probs + correction.detach()
             kl_loss = kl_scale * ((corrected_probs * (corrected_probs / unpert_probs).log()).sum())
-            print(" kl_loss", kl_loss.data.cpu().numpy())
+            # print(" kl_loss", kl_loss.data.cpu().numpy())
             loss += kl_loss
 
         loss_per_iter.append(loss.data.cpu().numpy())
-        print(" pplm_loss", (loss - kl_loss).data.cpu().numpy())
+        # print(" pplm_loss", (loss - kl_loss).data.cpu().numpy())
 
         # compute gradients
         loss.backward()
@@ -468,7 +468,7 @@ def generate_text_pplm(
     last = None
     unpert_discrim_loss = 0
     loss_in_time = []
-    for i in trange(length, ascii=True):
+    for i in trange(length, desc='Generating with PPLM'):
 
         # Get past/probs for current output, except for last word
         # Note that GPT takes 2 inputs: past + current_token
@@ -538,7 +538,7 @@ def generate_text_pplm(
             prediction = classifier(torch.mean(unpert_last_hidden, dim=1))
             label = torch.tensor([class_label], device=device, dtype=torch.long)
             unpert_discrim_loss = ce_loss(prediction, label)
-            print("unperturbed discrim loss", unpert_discrim_loss.data.cpu().numpy())
+            # print("unperturbed discrim loss", unpert_discrim_loss.data.cpu().numpy())
         else:
             unpert_discrim_loss = 0
 
@@ -568,7 +568,7 @@ def generate_text_pplm(
         # update context/output_so_far appending the new token
         output_so_far = last if output_so_far is None else torch.cat((output_so_far, last), dim=1)
 
-        print(tokenizer.decode(output_so_far.tolist()[0]))
+        # print(tokenizer.decode(output_so_far.tolist()[0]))
 
     return output_so_far, unpert_discrim_loss, loss_in_time
 
