@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import click
 from sklearn.model_selection import train_test_split
@@ -20,8 +20,9 @@ def write_corpus(filenames: List[str], out_file: Path, eos_token='<|endoftext|>'
 
 @click.command()
 @click.option('--csv_path', required=True, type=str)
+@click.option('--limit', default=None, type=int)
 @click.option('--test_size', default=0.01, type=float)
-def create_finetune_data(csv_path: str, test_size=0.01):
+def create_finetune_data(csv_path: str, limit: Optional[int], test_size=0.01):
     csv_path = Path(csv_path)
     assert csv_path.exists() and csv_path.is_file()
 
@@ -30,6 +31,9 @@ def create_finetune_data(csv_path: str, test_size=0.01):
     out_dir.mkdir()
 
     df = pd.read_csv(csv_path)
+    if limit:
+        df = df.head(limit).copy()
+
     train, test = train_test_split(df, test_size=test_size)
 
     train.to_csv(out_dir / f'{experiment_name}_train.csv', index=False)
