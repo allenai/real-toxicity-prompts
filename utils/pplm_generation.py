@@ -35,7 +35,7 @@ from torch.autograd import Variable
 from tqdm import trange
 
 from models.pplm_classification_head import ClassificationHead
-from transformers import GPT2Tokenizer
+from transformers import GPT2Tokenizer, Pipeline
 from transformers.file_utils import cached_path
 from transformers.modeling_gpt2 import GPT2LMHeadModel
 
@@ -798,3 +798,105 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     run_pplm_example(**vars(args))
+
+
+class PPLMGeneration(Pipeline):
+    def __init__(self,
+                 pretrained_model="gpt2-medium",
+                 discrim=None,
+                 discrim_weights=None,
+                 discrim_meta=None,
+                 seed=0):
+        # Set random seed
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+        if discrim == "generic":
+            set_generic_model_params(discrim_weights, discrim_meta)
+
+        if discrim is not None:
+            pretrained_model = DISCRIMINATOR_MODELS_PARAMS[discrim]["pretrained_model"]
+            print("discrim = {}, pretrained_model set " "to discriminator's = {}".format(discrim, pretrained_model))
+
+        # load pretrained model
+        model = GPT2LMHeadModel.from_pretrained(pretrained_model, output_hidden_states=True)
+        model.eval()
+
+        # load tokenizer
+        tokenizer = GPT2Tokenizer.from_pretrained(pretrained_model)
+
+        # Freeze GPT-2 weights
+        for param in model.parameters():
+            param.requires_grad = False
+
+        super().__init__(model=model, tokenizer=tokenizer)
+
+        # Additional setup after creating model and tokenizer
+        self.discrim = discrim
+
+    # Default parameters correspond to those in the PPLM paper for the toxicity discriminative model
+    # Others (such as sampling) taken from https://github.com/huggingface/transformers/tree/master/examples/pplm
+    def __call__(self,
+                 cond_text='',
+                 num_samples=1,
+                 class_label=-1,
+                 length=20,
+                 stepsize=0.02,
+                 temperature=1.0,
+                 top_k=10,
+                 sample=True,
+                 num_iterations=10,
+                 grad_length=10000,
+                 horizon_length=1,
+                 window_length=0,
+                 decay=False,
+                 gamma=1.0,
+                 gm_scale=0.9,
+                 kl_scale=0.01,
+                 repetition_penalty=1.0,
+                 clean_up_tokenization_spaces=True):
+        # Tokenize text
+        tokenized_cond_text = self.tokenizer.encode(self.tokenizer.bos_token + cond_text)
+
+        classifier, class_id = get_classifier(self.discrim, class_label, self.device)
+        loss_type = PPLM_DISCRIM
+
+        pert_gen_tok_texts = []
+        for i in range(num_samples):
+            pert_gen_tok_text, discrim_loss, loss_in_time = generate_text_pplm(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                context=tokenized_cond_text,
+                device=self.device,
+                perturb=True,
+                bow_indices=None,
+                classifier=classifier,
+                class_label=class_id,
+                loss_type=loss_type,
+                length=length,
+                stepsize=stepsize,
+                temperature=temperature,
+                top_k=top_k,
+                sample=sample,
+                num_iterations=num_iterations,
+                grad_length=grad_length,
+                horizon_length=horizon_length,
+                window_length=window_length,
+                decay=decay,
+                gamma=gamma,
+                gm_scale=gm_scale,
+                kl_scale=kl_scale,
+                repetition_penalty=repetition_penalty,
+            )
+            pert_gen_tok_texts.append(pert_gen_tok_text)
+
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+
+        pert_gen_texts = [
+            self.tokenizer.decode(pert_gen_tok_text.tolist()[0],
+                                  clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+            for pert_gen_tok_text in pert_gen_tok_texts
+        ]
+
+        return pert_gen_texts
