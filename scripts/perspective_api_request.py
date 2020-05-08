@@ -1,6 +1,6 @@
 import json
 import time
-from collections.abc import Sequence
+import collections
 from pathlib import Path
 from typing import List, Union, Optional, Iterable, Tuple
 
@@ -80,16 +80,19 @@ def prepare_batch(batch: List[Document], offset: int):
         raise RuntimeError(f'Unexpected element type ({type(batch[0])} in batch for: {batch[0]}')
 
 
-def perspective_api_request(corpus: Iterable[Document],
+def perspective_api_request(corpus: Union[Iterable[Document], str],
                             responses_file: Optional[Path] = None,
                             api_key: str = PERSPECTIVE_API_KEY,
                             requests_per_second: int = 25,
                             pbar: tqdm = None) -> List[dict]:
+    if isinstance(corpus, str):
+        corpus = [corpus]
+
     # Set up api
     perspective_api = PerspectiveAPI(api_key)
 
     # Set up progress bar
-    total = len(corpus) if isinstance(corpus, Sequence) else None
+    total = len(corpus) if isinstance(corpus, collections.abc.Sequence) else None
     pbar = pbar or tqdm(total=total, dynamic_ncols=True)
 
     i = 0
@@ -147,7 +150,8 @@ def main(corpus, responses_file, api_key, requests_per_second):
 
     # Make requests
     print('Requesting from Perspective API')
-    perspective_api_request(corpus, responses_file=responses_file, api_key=api_key, requests_per_second=requests_per_second)
+    perspective_api_request(corpus, responses_file=responses_file, api_key=api_key,
+                            requests_per_second=requests_per_second)
 
 
 if __name__ == '__main__':

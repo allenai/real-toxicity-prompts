@@ -1,17 +1,15 @@
 import json
 import logging
+import math
 from multiprocessing import Process, Queue
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict
 
 import click
-import math
 import pandas as pd
 from tqdm.auto import tqdm
-from transformers import GPT2LMHeadModel
 
 from scripts.perspective_api_request import perspective_api_request
-from utils.constants import OUTPUT_DIR
 from utils.generation import GPT2Generator
 from utils.utils import batchify
 
@@ -26,27 +24,22 @@ class PerspectiveWorker:
 
         # Setup worker thread
         self.task_queue = Queue()
-        self.done_queue = Queue()
-        Process(
-            target=self.perspective_worker,
-            args=(self.task_queue, self.done_queue, out_file, total, rps)
-        ).start()
+        Process(target=self.perspective_worker, args=(self.task_queue, out_file, total, rps)).start()
 
-    def add_request(self, request_id: str, text: str):
+    def request(self, request_id: str, text: str):
         if request_id not in self.requests_handled:
             self.task_queue.put((request_id, text))
 
-    def get_responses(self) -> List[dict]:
+    def stop(self):
         self.task_queue.put(SENTINEL)
-        current_responses = self.done_queue.get()
-        return list(self.requests_handled.values()) + current_responses
 
     @staticmethod
-    def perspective_worker(input: Queue, output: Queue, responses_file: Path, total: int, rps: int):
+    def perspective_worker(input: Queue, responses_file: Path, total: int, rps: int):
         pbar = tqdm(total=total, dynamic_ncols=True, position=1)
-        responses = perspective_api_request(iter(input.get, SENTINEL), responses_file=responses_file, pbar=pbar,
-                                            requests_per_second=rps)
-        output.put(responses)
+        perspective_api_request(iter(input.get, SENTINEL),
+                                responses_file=responses_file,
+                                pbar=pbar,
+                                requests_per_second=rps)
 
 
 def create_ngrams_dataset(df: pd.DataFrame,
@@ -59,7 +52,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
                           enable_generation: bool = True,
                           enable_perspective: bool = True,
                           query: str = None,
-                          model_path: Path = None) -> pd.DataFrame:
+                          model_path: str = None):
     # Store locations of output files
     config_file = out_dir / 'config.txt'
     perspective_file = out_dir / 'perspective.jsonl'
@@ -69,7 +62,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
     # Create config
     config = {
         'query': str(query),
-        'model_path': str(model_path),
+        'model_path': model_path,
         'enable_generation': enable_generation,
         'enable_perspective_requests': enable_perspective,
         'max_gen_len': max_gen_len,
@@ -128,11 +121,11 @@ def create_ngrams_dataset(df: pd.DataFrame,
 
         if 'prompt_toxicity' not in df:
             for i, prompt in enumerate(df.prompt):
-                perspective.add_request(f'prompt-{i}', prompt)
+                perspective.request(f'prompt-{i}', prompt)
 
         if 'continuation_toxicity' not in df:
             for i, continuation in enumerate(df.continuation):
-                perspective.add_request(f'continuation-{i}', continuation)
+                perspective.request(f'continuation-{i}', continuation)
 
     # Generate
     if enable_generation and 'generations' not in df:
@@ -146,7 +139,7 @@ def create_ngrams_dataset(df: pd.DataFrame,
                     generation = json.loads(line)
                     generations.append(generation)
                     if enable_perspective:
-                        perspective.add_request(f'generation-{i}', generation)
+                        perspective.request(f'generation-{i}', generation)
                     i += 1
             print(f'Resuming generation ({len(generations)} already computed)...')
 
@@ -163,47 +156,41 @@ def create_ngrams_dataset(df: pd.DataFrame,
                 with generations_file.open('a') as f:
                     print(json.dumps(generation), file=f)
                 if enable_perspective:
-                    perspective.add_request(f'generation-{i}', generation)
+                    perspective.request(f'generation-{i}', generation)
                 i += 1
+
+    if enable_perspective:
+        perspective.stop()
 
 
 @click.command()
-@click.option('--model_name', required=True, type=str, help='model name in finetuned models dir')
-@click.option('--gen_batch_size', required=True, type=int, help='batch size for generation (try 256)')
-@click.option('--perspective_rps', required=True, type=int, help='Perspective API rate limit (up to 25)')
-@click.option('--dataset_name', default='prompts_n_50percent')
+@click.option('--model_name_or_path', required=True, type=str, help='model to use for generation')
+@click.option('--out_dir', required=True, type=str, help='where to store outputs')
+@click.option('--dataset_file', required=True, type=str)
+@click.option('--gen_batch_size', required=True, type=int, help='batch size for generation')
+@click.option('--perspective_rps', default=25, help='Perspective API rate limit (up to 25)')
 @click.option('--num_gen_per_prompt', default=25)
 @click.option('--max_gen_len', default=20)
-def run_finetuned_experiment(
-        model_name: str,
+def run_prompts_experiment(
+        model_name_or_path: str,
+        out_dir: str,
         gen_batch_size: int,
         perspective_rps: int,
-        dataset_name: str,
+        dataset_file: str,
         num_gen_per_prompt: int,
         max_gen_len: int,
 ):
-    # Find directories
-    prompts_dir = OUTPUT_DIR / 'prompts'
-    experiments_dir = prompts_dir / 'experiments'
-    finetune_dir = OUTPUT_DIR / 'finetuned_models'
-    out_dir = experiments_dir / f'{dataset_name}_{model_name}'
-
-    # Load dataset and model
-    df = pd.read_pickle(prompts_dir / 'datasets' / f'{dataset_name}.pkl')
-    model_path = finetune_dir / model_name / 'finetune_output'
-    model = GPT2LMHeadModel.from_pretrained(model_path)
-    generator = GPT2Generator(model)
-
-    # Run experiment!
-    create_ngrams_dataset(df=df,
-                          out_dir=out_dir,
-                          generator=generator,
-                          model_path=model_path,
-                          num_gen_per_prompt=num_gen_per_prompt,
-                          max_gen_len=max_gen_len,
-                          gen_batch_size=gen_batch_size,
-                          perspective_rps=perspective_rps)
+    create_ngrams_dataset(
+        df=pd.read_pickle(dataset_file),
+        out_dir=Path(out_dir),
+        generator=GPT2Generator(model_name_or_path),
+        model_path=model_name_or_path,
+        num_gen_per_prompt=num_gen_per_prompt,
+        max_gen_len=max_gen_len,
+        gen_batch_size=gen_batch_size,
+        perspective_rps=perspective_rps
+    )
 
 
 if __name__ == '__main__':
-    run_finetuned_experiment()
+    run_prompts_experiment()
