@@ -23,17 +23,18 @@ import logging
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple, List, Dict
 
+import torch
+import torch.nn.functional as F
+from torch.utils.data import ConcatDataset
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
     AutoConfig,
-    AutoModelWithLMHead,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
-    LineByLineTextDataset,
     PreTrainedTokenizer,
     TextDataset,
     Trainer,
@@ -41,10 +42,33 @@ from transformers import (
     set_seed,
 )
 
+from models.affect_lm import NUM_AFFECTS, AffectGPT2LMHeadModel
+
 logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+
+class AffectTextDataset(TextDataset):
+    def __init__(
+            self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, affect_class: int,
+            overwrite_cache=False, local_rank=-1,
+    ):
+        super().__init__(tokenizer, file_path, block_size, overwrite_cache, local_rank)
+        self.affect_class = affect_class
+
+    def __getitem__(self, i) -> Tuple[torch.Tensor, torch.Tensor]:
+        return (torch.tensor(self.examples[i], dtype=torch.long),
+                F.one_hot(torch.tensor([self.affect_class]), num_classes=NUM_AFFECTS))
+
+
+class AffectDataCollator(DataCollatorForLanguageModeling):
+    def collate_batch(self, examples: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        input_ids, affect_labels = zip(*examples)
+        batch = super().collate_batch(input_ids)
+        batch['affect_labels'] = torch.stack(affect_labels)
+        return batch
 
 
 @dataclass
@@ -72,6 +96,15 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
+    affect_beta: int = field(
+        default=1, metadata={"help": "Beta to set the AffectLM model to before training and eval"}
+    )
+    freeze_transformer: bool = field(
+        default=True, metadata={"help": "Freeze the transformer parameters."}
+    ),
+    freeze_lm_head: bool = field(
+        default=True, metadata={"help": "Freeze the GPT-2 LM head parameters."}
+    ),
 
 
 @dataclass
@@ -80,16 +113,17 @@ class DataTrainingArguments:
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
 
-    train_data_file: Optional[str] = field(
-        default=None, metadata={"help": "The input training data file (a text file)."}
-    )
-    eval_data_file: Optional[str] = field(
+    train_data_files: Optional[str] = field(
         default=None,
-        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+        metadata={
+            "nargs": "+",
+        }
     )
-    line_by_line: bool = field(
-        default=False,
-        metadata={"help": "Whether distinct lines of text in the dataset are to be handled as distinct sequences."},
+    eval_data_files: Optional[str] = field(
+        default=None,
+        metadata={
+            "nargs": "+",
+        },
     )
 
     mlm: bool = field(
@@ -113,15 +147,15 @@ class DataTrainingArguments:
 
 
 def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
-    file_path = args.eval_data_file if evaluate else args.train_data_file
-    if args.line_by_line:
-        return LineByLineTextDataset(
-            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank
-        )
-    else:
-        return TextDataset(
-            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank,
-        )
+    file_paths = args.eval_data_files if evaluate else args.train_data_files
+    if len(file_paths) != NUM_AFFECTS:
+        raise ValueError('There must be 1 data file for each affect class.')
+    datasets = []
+    for i, file_path in enumerate(file_paths):
+        d = AffectTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size,
+                              affect_class=i, local_rank=local_rank)
+        datasets.append(d)
+    return ConcatDataset(datasets)
 
 
 def main():
@@ -192,7 +226,7 @@ def main():
         )
 
     if model_args.model_name_or_path:
-        model = AutoModelWithLMHead.from_pretrained(
+        model = AffectGPT2LMHeadModel.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
             config=config,
@@ -200,9 +234,15 @@ def main():
         )
     else:
         logger.info("Training new model from scratch")
-        model = AutoModelWithLMHead.from_config(config)
+        model = AffectGPT2LMHeadModel.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
+
+    model.affect.beta = args.affect_beta  # Affect beta set before training/eval
+    if args.freeze_transformer:
+        model.freeze_transformer()
+    if args.freeze_lm_head:
+        model.freeze_lm_head()
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
