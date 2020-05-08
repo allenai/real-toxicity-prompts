@@ -5,6 +5,7 @@ data/
 output/
 experiments/
 runs/
+wandb/
 
 # Deployment files
 .idea/deployment.xml
