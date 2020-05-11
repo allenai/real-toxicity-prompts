@@ -59,8 +59,9 @@ class AffectTextDataset(TextDataset):
         self.affect_class = affect_class
 
     def __getitem__(self, i) -> Tuple[torch.Tensor, torch.Tensor]:
-        return (torch.tensor(self.examples[i], dtype=torch.long),
-                F.one_hot(torch.tensor([self.affect_class]), num_classes=NUM_AFFECTS))
+        input_ids = torch.tensor(self.examples[i], dtype=torch.long)
+        affect_label = F.one_hot(torch.LongTensor([self.affect_class]), num_classes=NUM_AFFECTS).float()
+        return input_ids, affect_label
 
 
 class AffectDataCollator(DataCollatorForLanguageModeling):
@@ -101,10 +102,10 @@ class ModelArguments:
     )
     freeze_transformer: bool = field(
         default=True, metadata={"help": "Freeze the transformer parameters."}
-    ),
+    )
     freeze_lm_head: bool = field(
         default=True, metadata={"help": "Freeze the GPT-2 LM head parameters."}
-    ),
+    )
 
 
 @dataclass
@@ -166,7 +167,7 @@ def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    if data_args.eval_data_file is None and training_args.do_eval:
+    if data_args.eval_data_files is None and training_args.do_eval:
         raise ValueError(
             "Cannot do evaluation without an evaluation data file. Either supply a file to --eval_data_file "
             "or remove the --do_eval argument."
@@ -238,10 +239,12 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
 
-    model.affect.beta = args.affect_beta  # Affect beta set before training/eval
-    if args.freeze_transformer:
+    model.affect.beta = model_args.affect_beta  # Affect beta set before training/eval
+    if model_args.freeze_transformer:
+        print("Freezing transformer weights")
         model.freeze_transformer()
-    if args.freeze_lm_head:
+    if model_args.freeze_lm_head:
+        print("Freezing LM head weights")
         model.freeze_lm_head()
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
@@ -267,7 +270,7 @@ def main():
         if training_args.do_eval
         else None
     )
-    data_collator = DataCollatorForLanguageModeling(
+    data_collator = AffectDataCollator(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
 
