@@ -1,3 +1,5 @@
+#!/bin/bash
+
 DATA=ctrl_ft_v1
 BATCH_SIZE=1
 EVAL_BATCH_SIZE=1
@@ -10,6 +12,8 @@ PYTHONPATH=. python scripts/finetune_ctrl.py \
 	--do_train \
 	--do_eval \
 	--evaluate_during_training \
+	--logging_steps 100 \
+	--save_steps 100 \
 	--per_gpu_train_batch_size $BATCH_SIZE \
 	--gradient_accumulation_steps $GRAD_ACCUM_STEPS \
 	--per_gpu_eval_batch_size $EVAL_BATCH_SIZE \

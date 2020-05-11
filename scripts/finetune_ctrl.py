@@ -260,6 +260,8 @@ def main():
         )
 
     # Add CTRL codes to vocab
+    assert len(data_args.ctrl_codes) == len(data_args.eval_data_files) == len(data_args.ctrl_codes)
+    print("CTRL codes:", *data_args.ctrl_codes)
     num_added_toks = tokenizer.add_tokens(data_args.ctrl_codes)
     assert num_added_toks == len(data_args.ctrl_codes)
     ctrl_code_toks = tokenizer.encode(data_args.ctrl_codes)
