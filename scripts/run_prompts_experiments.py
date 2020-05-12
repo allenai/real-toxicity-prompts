@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Iterable, List
 
 import click
+from knockknock import slack_sender
 import pandas as pd
 from tqdm.auto import tqdm
 
 from scripts.perspective_api_request import perspective_api_request
 from utils.generation import GPT2Generator
 from utils.utils import batchify
+from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
@@ -86,6 +88,7 @@ def generate(prompts: List[str],
 @click.option('--gen_max_len', default=20)
 @click.option('--gen_batch_size', default=32)
 @click.option('--resume/--no-resume', default=False)
+@slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
 def main(out_dir: str,
          dataset_file: str,
          model_name_or_path: str,
