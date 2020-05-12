@@ -15,19 +15,15 @@ from utils.utils import batchify
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
-SENTINEL = 'STOP'
-
 
 class PerspectiveWorker:
+    SENTINEL = 'STOP'
+
     def __init__(self, out_file: Path, total: int, rps: int):
-        self.requests_handled = {}
-        if out_file.exists():
-            with out_file.open() as f:
-                for line in tqdm(f, desc='Loading saved perspective responses'):
-                    response = json.loads(line)
-                    self.requests_handled[response['request_id']] = response
-            print(f'Resuming perspective ({len(self.requests_handled)} already completed)...')
-            total -= len(self.requests_handled)
+        self.requests_handled = set()
+        for response in load_cache(out_file):
+            self.requests_handled.add(response['request_id'])
+        total -= len(self.requests_handled)
 
         # Setup worker thread
         self.task_queue = Queue()
@@ -39,16 +35,20 @@ class PerspectiveWorker:
             self.task_queue.put((request_id, text))
 
     def stop(self):
-        self.task_queue.put(SENTINEL)
-        self.process.join()
+        self.task_queue.put(self.SENTINEL)
 
-    @staticmethod
-    def perspective_worker(input: Queue, responses_file: Path, total: int, rps: int):
+    @classmethod
+    def perspective_worker(cls, queue: Queue, responses_file: Path, total: int, rps: int):
+        queue_iter = iter(queue.get, cls.SENTINEL)
         pbar = tqdm(total=total, dynamic_ncols=True, position=1)
-        perspective_api_request(iter(input.get, SENTINEL),
-                                responses_file=responses_file,
-                                pbar=pbar,
-                                requests_per_second=rps)
+        perspective_api_request(queue_iter, responses_file=responses_file, pbar=pbar, requests_per_second=rps)
+
+
+def load_cache(file: Path):
+    if file.exists():
+        with file.open() as f:
+            for line in tqdm(f, desc=f'Loading cache from {file}'):
+                yield json.loads(line)
 
 
 def generate(prompts: List[str],
@@ -58,20 +58,15 @@ def generate(prompts: List[str],
              out_file: Path) -> Iterable[str]:
     # Resume generation
     num_cached_generations = 0
-    if out_file.exists():
-        print("Loading cached generations...")
-        with out_file.open() as f:
-            for line in tqdm(f, desc='Loading saved generations'):
-                generation = json.loads(line)
-                yield generation
-                num_cached_generations += 1
-        print(f"Loaded {num_cached_generations} cached generations...")
+    for generation in load_cache(out_file):
+        yield generation
+        num_cached_generations += 1
 
     # Generate with prompts
     prompts = prompts[num_cached_generations:]
     for prompt in tqdm(batchify(prompts, batch_size),
                        total=math.ceil(len(prompts) / batch_size),
-                       desc=f'Generation (batch size {batch_size})',
+                       desc=f'Batch generation (bs={batch_size})',
                        dynamic_ncols=True):
         # Generate
         batch = generator.generate(prompt, max_len)
@@ -85,13 +80,15 @@ def generate(prompts: List[str],
 @click.command()
 @click.argument('out_dir')
 @click.option('--dataset_file', required=True, type=str)
+@click.option('--model_name_or_path', default='gpt2')
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
 @click.option('--gen_max_len', default=20)
 @click.option('--gen_batch_size', default=32)
-@click.option('--resume', default=False)
+@click.option('--resume/--no-resume', default=False)
 def main(out_dir: str,
          dataset_file: str,
+         model_name_or_path: str,
          perspective_rps: int,
          gen_samples: int,
          gen_max_len: int,
@@ -110,14 +107,15 @@ def main(out_dir: str,
 
     # Generate and request perspective scores
     prompts = df['prompt.text'].repeat(gen_samples)
-    generator = GPT2Generator()
+    generator = GPT2Generator(model_name_or_path)
     generations_iter = generate(prompts=prompts,
                                 generator=generator,
                                 max_len=gen_max_len,
                                 batch_size=gen_batch_size,
                                 out_file=out_dir / 'generations.jsonl')
+
     for i, gen in enumerate(generations_iter):
-        perspective(f'generation_{i}', gen)
+        perspective(f'generation-{i}', gen)
 
     perspective.stop()
 
