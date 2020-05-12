@@ -854,7 +854,8 @@ class PPLMGeneration(Pipeline):
                  gm_scale=0.9,
                  kl_scale=0.01,
                  repetition_penalty=1.0,
-                 clean_up_tokenization_spaces=True):
+                 clean_up_tokenization_spaces=True,
+                 include_context_in_generation=False):
         # Tokenize text
         tokenized_cond_text = self.tokenizer.encode(self.tokenizer.bos_token + cond_text)
 
@@ -893,9 +894,10 @@ class PPLMGeneration(Pipeline):
         if self.device == "cuda":
             torch.cuda.empty_cache()
 
+        decode_start_idx = 0 if include_context_in_generation else len(tokenized_cond_text)
+        pert_gen_tok_texts = [x[0, decode_start_idx:].tolist() for x in pert_gen_tok_texts]
         pert_gen_texts = [
-            self.tokenizer.decode(pert_gen_tok_text.tolist()[0],
-                                  clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+            self.tokenizer.decode(pert_gen_tok_text, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
             for pert_gen_tok_text in pert_gen_tok_texts
         ]
 
