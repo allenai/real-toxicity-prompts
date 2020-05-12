@@ -816,7 +816,8 @@ class PPLMGeneration(Pipeline):
                  discrim=None,
                  discrim_weights=None,
                  discrim_meta=None,
-                 seed=0):
+                 seed=0,
+                 **kwargs):
         # Set random seed
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -839,7 +840,7 @@ class PPLMGeneration(Pipeline):
         for param in model.parameters():
             param.requires_grad = False
 
-        super().__init__(model=model, tokenizer=tokenizer)
+        super().__init__(model=model, tokenizer=tokenizer, **kwargs)
 
         # Additional setup after creating model and tokenizer
         self.discrim = discrim
