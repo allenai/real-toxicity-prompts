@@ -72,7 +72,7 @@ DISCRIMINATOR_MODELS_PARAMS = {
         "pretrained_model": "gpt2-medium",
     },
     "toxicity": {
-        "url": "https://raw.githubusercontent.com/uber-research/PPLM/master/paper_code/discrim_models/clickbait_classifierhead.pt",
+        "url": "https://raw.githubusercontent.com/uber-research/PPLM/master/paper_code/discrim_models/toxicity_classifierhead.pt",
         "class_size": 2,
         "embed_size": 1024,
         "class_vocab": {"non_toxic": 0, "toxic": 1},
