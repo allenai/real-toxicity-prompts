@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from transformers import GPT2LMHeadModel
 
-from datasets.affect_dataset import NUM_AFFECTS
+NUM_AFFECTS = 2
 
 
 class Affect(nn.Module):

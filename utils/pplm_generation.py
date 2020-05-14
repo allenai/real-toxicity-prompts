@@ -72,7 +72,7 @@ DISCRIMINATOR_MODELS_PARAMS = {
         "pretrained_model": "gpt2-medium",
     },
     "toxicity": {
-        "url": "https://raw.githubusercontent.com/uber-research/PPLM/master/paper_code/discrim_models/clickbait_classifierhead.pt",
+        "url": "https://raw.githubusercontent.com/uber-research/PPLM/master/paper_code/discrim_models/toxicity_classifierhead.pt",
         "class_size": 2,
         "embed_size": 1024,
         "class_vocab": {"non_toxic": 0, "toxic": 1},
@@ -276,6 +276,16 @@ def get_classifier(
     classifier.load_state_dict(torch.load(resolved_archive_file, map_location=device))
     classifier.eval()
 
+    label_id = get_class_id(name, class_label)
+
+    return classifier, label_id
+
+
+def get_class_id(name: Optional[str], class_label: Union[str, int]) -> Optional[int]:
+    if name is None:
+        return None
+
+    params = DISCRIMINATOR_MODELS_PARAMS[name]
     if isinstance(class_label, str):
         if class_label in params["class_vocab"]:
             label_id = params["class_vocab"][class_label]
@@ -297,7 +307,7 @@ def get_classifier(
     else:
         label_id = params["default_class"]
 
-    return classifier, label_id
+    return label_id
 
 
 def get_bag_of_words_indices(bag_of_words_ids_or_paths: List[str], tokenizer) -> List[List[List[int]]]:
@@ -806,7 +816,8 @@ class PPLMGeneration(Pipeline):
                  discrim=None,
                  discrim_weights=None,
                  discrim_meta=None,
-                 seed=0):
+                 seed=0,
+                 **kwargs):
         # Set random seed
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -829,10 +840,12 @@ class PPLMGeneration(Pipeline):
         for param in model.parameters():
             param.requires_grad = False
 
-        super().__init__(model=model, tokenizer=tokenizer)
+        super().__init__(model=model, tokenizer=tokenizer, **kwargs)
 
         # Additional setup after creating model and tokenizer
         self.discrim = discrim
+        classifier, class_id = get_classifier(self.discrim, -1, self.device)
+        self.classifier = classifier
 
     # Default parameters correspond to those in the PPLM paper for the toxicity discriminative model
     # Others (such as sampling) taken from https://github.com/huggingface/transformers/tree/master/examples/pplm
@@ -854,11 +867,12 @@ class PPLMGeneration(Pipeline):
                  gm_scale=0.9,
                  kl_scale=0.01,
                  repetition_penalty=1.0,
-                 clean_up_tokenization_spaces=True):
+                 clean_up_tokenization_spaces=True,
+                 include_context_in_generation=False):
         # Tokenize text
         tokenized_cond_text = self.tokenizer.encode(self.tokenizer.bos_token + cond_text)
 
-        classifier, class_id = get_classifier(self.discrim, class_label, self.device)
+        class_id = get_class_id(self.discrim, class_label)
         loss_type = PPLM_DISCRIM
 
         pert_gen_tok_texts = []
@@ -870,7 +884,7 @@ class PPLMGeneration(Pipeline):
                 device=self.device,
                 perturb=True,
                 bow_indices=None,
-                classifier=classifier,
+                classifier=self.classifier,
                 class_label=class_id,
                 loss_type=loss_type,
                 length=length,
@@ -890,12 +904,10 @@ class PPLMGeneration(Pipeline):
             )
             pert_gen_tok_texts.append(pert_gen_tok_text)
 
-        if self.device == "cuda":
-            torch.cuda.empty_cache()
-
+        decode_start_idx = 0 if include_context_in_generation else len(tokenized_cond_text)
+        pert_gen_tok_texts = [x[0, decode_start_idx:].tolist() for x in pert_gen_tok_texts]
         pert_gen_texts = [
-            self.tokenizer.decode(pert_gen_tok_text.tolist()[0],
-                                  clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+            self.tokenizer.decode(pert_gen_tok_text, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
             for pert_gen_tok_text in pert_gen_tok_texts
         ]
 
