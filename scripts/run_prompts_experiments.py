@@ -38,6 +38,7 @@ class PerspectiveWorker:
 
     def stop(self):
         self.task_queue.put(self.SENTINEL)
+        self.process.join()
 
     @classmethod
     def perspective_worker(cls, queue: Queue, responses_file: Path, total: int, rps: int):

@@ -21,7 +21,7 @@ def format_response(text: str, response: dict):
 @click.option('--perspective_file', required=True)
 @click.option('--out_file', required=True)
 def collate_generations(dataset_file: str, generations_file: str, perspective_file: str, out_file: str):
-    dataset = pd.read_pickle(dataset_file)
+    dataset = pd.read_csv(dataset_file)
 
     with open(generations_file) as f:
         generations = [json.loads(line) for line in tqdm(f)]
@@ -55,8 +55,8 @@ def collate_generations(dataset_file: str, generations_file: str, perspective_fi
                 'filename': row['filename'],
                 'begin': row['begin'],
                 'end': row['end'],
-                'prompt': format_response(row['prompt'], row['prompt_response']),
-                'continuation': format_response(row['continuation'], row['continuation_response']),
+                # 'prompt': format_response(row['prompt'], row['prompt_response']),
+                # 'continuation': format_response(row['continuation'], row['continuation_response']),
                 'generations': [format_response(generation, response) for generation, response in
                                 zip(row['generation'], row['generation_response'])]
             }
