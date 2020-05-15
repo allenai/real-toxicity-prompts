@@ -2,20 +2,16 @@ from pathlib import Path
 from typing import List, Optional
 
 import click
-from sklearn.model_selection import train_test_split
 import pandas as pd
-from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 
 from datasets.openwebtext_dataset import openwebtext_dataloader
+from utils.utils import save_gpt2_training_data
 
 
-def write_corpus(filenames: List[str], out_file: Path, eos_token='<|endoftext|>'):
+def write_corpus(filenames: List[str], out_file: Path):
     dataloader = openwebtext_dataloader(filenames)
-    with out_file.open('a') as f:
-        for i, (filename, text) in enumerate(tqdm(dataloader)):
-            print(text, file=f, end='')
-            if i != len(dataloader) - 1:
-                print(eos_token, file=f, end='')
+    save_gpt2_training_data(dataloader, out_file)
 
 
 @click.command()
