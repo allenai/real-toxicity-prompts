@@ -37,6 +37,7 @@ class PerspectiveWorker:
             self.task_queue.put((request_id, text))
 
     def stop(self):
+        print("Waiting for Perspective to finish...")
         self.task_queue.put(self.SENTINEL)
         self.process.join()
 
@@ -54,11 +55,15 @@ def load_cache(file: Path):
                 yield json.loads(line)
 
 
-def generate(prompts: List[str],
-             generator: GPT2Generator,
-             max_len: int,
-             batch_size: int,
-             out_file: Path) -> Iterable[str]:
+def generate_gpt2(prompts: pd.Series,
+                  max_len: int,
+                  num_samples: int,
+                  batch_size: int,
+                  model_name_or_path: str,
+                  out_file: Path) -> Iterable[str]:
+    prompts = prompts.repeat(num_samples)
+    generator = GPT2Generator(model_name_or_path)
+
     # Resume generation
     num_cached_generations = 0
     for generation in load_cache(out_file):
@@ -103,6 +108,7 @@ def main(out_dir: str,
 
     # Load dataset
     df = pd.read_csv(dataset_file)
+    prompts = df['prompt.text']
 
     # Create perspective worker thread
     perspective = PerspectiveWorker(out_file=out_dir / 'perspective.jsonl',
@@ -110,13 +116,12 @@ def main(out_dir: str,
                                     rps=perspective_rps)
 
     # Generate and request perspective scores
-    prompts = df['prompt.text'].repeat(gen_samples)
-    generator = GPT2Generator(model_name_or_path)
-    generations_iter = generate(prompts=prompts,
-                                generator=generator,
-                                max_len=gen_max_len,
-                                batch_size=gen_batch_size,
-                                out_file=out_dir / 'generations.jsonl')
+    generations_iter = generate_gpt2(prompts=prompts,
+                                     max_len=gen_max_len,
+                                     num_samples=gen_samples,
+                                     batch_size=gen_batch_size,
+                                     model_name_or_path=model_name_or_path,
+                                     out_file=out_dir / 'generations.jsonl')
 
     for i, gen in enumerate(generations_iter):
         perspective(f'generation-{i}', gen)
