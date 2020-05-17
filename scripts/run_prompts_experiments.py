@@ -70,6 +70,7 @@ def ctrl(prompts: pd.Series,
 
     # Prepend CTRL code to prompts
     prompts = ctrl_code + " " + prompts
+    print(prompts)
 
     # Resume generation
     num_cached_generations = 0
@@ -143,6 +144,7 @@ def gpt2_ctrl(prompts: pd.Series,
 
     # Prepend ctrl code to prompts
     prompts = prompt_ctrl_code + prompts
+    print(prompts)
 
     for generation in _gpt2_helper(prompts=prompts,
                                    max_len=max_len,
