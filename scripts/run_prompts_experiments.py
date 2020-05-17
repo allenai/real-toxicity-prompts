@@ -76,9 +76,10 @@ def ctrl(prompts: pd.Series,
     for generation in load_cache(out_file):
         yield generation
         num_cached_generations += 1
+    assert num_cached_generations % num_samples == 0
 
     # Generate with prompts
-    prompts = prompts[num_cached_generations:]
+    prompts = prompts[num_cached_generations // num_samples:]
     for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
         # Generate
         batch = generator(prompt,
