@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Iterable, List
 
 import click
-from knockknock import slack_sender
 import pandas as pd
+from knockknock import slack_sender
 from tqdm.auto import tqdm
+from transformers.pipelines import pipeline
 
 from scripts.perspective_api_request import perspective_api_request
+from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
 from utils.utils import batchify
-from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
@@ -55,14 +56,51 @@ def load_cache(file: Path):
                 yield json.loads(line)
 
 
-def generate_gpt2(prompts: pd.Series,
-                  max_len: int,
-                  num_samples: int,
-                  batch_size: int,
-                  model_name_or_path: str,
-                  out_file: Path) -> Iterable[str]:
-    prompts = prompts.repeat(num_samples)
+def ctrl(prompts: List[str],
+         max_len: int,
+         num_samples: int,
+         model_name_or_path: str,
+         out_file: Path) -> Iterable[str]:
+    # Setup model
+    generator = pipeline('text-generation', model=model_name_or_path, device=0)
+
+    # Resume generation
+    num_cached_generations = 0
+    for generation in load_cache(out_file):
+        yield generation
+        num_cached_generations += 1
+
+    # Generate with prompts
+    prompts = prompts[num_cached_generations:]
+    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
+        # Generate
+        batch = generator(prompt,
+                          num_return_sequences=num_samples,
+                          do_sample=True,
+                          temperature=1.0,
+                          repetition_penalty=1.2,
+                          top_k=0,
+                          top_p=0.9,
+                          max_length=max_len,
+                          return_prompt=False)
+
+        for generation in map(lambda g: g['generated_text'], batch):
+            with out_file.open('a') as f:
+                print(json.dumps(generation), file=f)
+            yield generation
+
+
+def gpt2(prompts: pd.Series,
+         max_len: int,
+         num_samples: int,
+         batch_size: int,
+         model_name_or_path: str,
+         out_file: Path) -> Iterable[str]:
+    # Setup model
     generator = GPT2Generator(model_name_or_path)
+
+    # Repeat prompts
+    prompts = prompts.repeat(num_samples)
 
     # Resume generation
     num_cached_generations = 0
@@ -88,6 +126,7 @@ def generate_gpt2(prompts: pd.Series,
 @click.command()
 @click.argument('out_dir')
 @click.option('--dataset_file', required=True, type=str)
+@click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl']))
 @click.option('--model_name_or_path', default='gpt2')
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
@@ -97,6 +136,7 @@ def generate_gpt2(prompts: pd.Series,
 @slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
 def main(out_dir: str,
          dataset_file: str,
+         model_type: str,
          model_name_or_path: str,
          perspective_rps: int,
          gen_samples: int,
@@ -116,12 +156,21 @@ def main(out_dir: str,
                                     rps=perspective_rps)
 
     # Generate and request perspective scores
-    generations_iter = generate_gpt2(prompts=prompts,
-                                     max_len=gen_max_len,
-                                     num_samples=gen_samples,
-                                     batch_size=gen_batch_size,
-                                     model_name_or_path=model_name_or_path,
-                                     out_file=out_dir / 'generations.jsonl')
+    if model_type == 'gpt2':
+        generations_iter = gpt2(prompts=prompts,
+                                max_len=gen_max_len,
+                                num_samples=gen_samples,
+                                batch_size=gen_batch_size,
+                                model_name_or_path=model_name_or_path,
+                                out_file=out_dir / 'generations.jsonl')
+    elif model_type == 'ctrl':
+        generations_iter = ctrl(prompts=prompts,
+                                max_len=gen_max_len,
+                                num_samples=gen_samples,
+                                model_name_or_path=model_name_or_path,
+                                out_file=out_dir / 'generations.jsonl')
+    else:
+        raise NotImplementedError(f'Model {model_name_or_path} not implemented')
 
     for i, gen in enumerate(generations_iter):
         perspective(f'generation-{i}', gen)
