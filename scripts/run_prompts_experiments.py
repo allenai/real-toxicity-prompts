@@ -199,7 +199,7 @@ def gpt2(prompts: pd.Series,
 @click.command()
 @click.argument('out_dir')
 @click.option('--dataset_file', required=True, type=str)
-@click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl']))
+@click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl']))
 @click.option('--model_name_or_path', default='gpt2')
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
@@ -271,7 +271,10 @@ def main(out_dir: str,
     for i, gen in enumerate(generations_iter):
         perspective(f'generation-{i}', gen)
 
+    torch.cuda.empty_cache()
+
     perspective.stop()
+    print('Done')
 
 
 if __name__ == '__main__':
