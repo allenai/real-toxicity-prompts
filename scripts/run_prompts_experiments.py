@@ -59,13 +59,17 @@ def load_cache(file: Path):
                 yield json.loads(line)
 
 
-def ctrl(prompts: List[str],
+def ctrl(prompts: pd.Series,
          max_len: int,
          num_samples: int,
+         ctrl_code: str,
          model_name_or_path: str,
          out_file: Path) -> Iterable[str]:
     # Setup model
     generator = pipeline('text-generation', model=model_name_or_path, device=0)
+
+    # Prepend CTRL code to prompts
+    prompts = ctrl_code + " " + prompts
 
     # Resume generation
     num_cached_generations = 0
@@ -121,6 +125,31 @@ def _gpt2_helper(prompts: pd.Series,
             with out_file.open('a') as f:
                 print(json.dumps(generation), file=f)
             yield generation
+
+
+def gpt2_ctrl(prompts: pd.Series,
+              max_len: int,
+              num_samples: int,
+              batch_size: int,
+              prompt_ctrl_code: str,
+              ctrl_codes: List[str],
+              model_name_or_path: str,
+              out_file: Path):
+    # Use default gpt2 architecture with additional tokens in vocab
+    generator = GPT2Generator(model_name_or_path)
+    num_tokens_added = generator.tokenizer.add_tokens(ctrl_codes)
+    assert num_tokens_added == 2
+
+    # Prepend ctrl code to prompts
+    prompts = prompt_ctrl_code + prompts
+
+    for generation in _gpt2_helper(prompts=prompts,
+                                   max_len=max_len,
+                                   num_samples=num_samples,
+                                   batch_size=batch_size,
+                                   generator=generator,
+                                   out_file=out_file):
+        yield generation
 
 
 def gpt2_affect(prompts: pd.Series,
@@ -207,22 +236,35 @@ def main(out_dir: str,
                                 batch_size=gen_batch_size,
                                 model_name_or_path=model_name_or_path,
                                 out_file=out_dir / 'generations.jsonl')
-    elif model_type == 'ctrl':
-        generations_iter = ctrl(prompts=prompts,
-                                max_len=gen_max_len,
-                                num_samples=gen_samples,
-                                model_name_or_path=model_name_or_path,
-                                out_file=out_dir / 'generations.jsonl')
     elif model_type == 'gpt2-affect':
         generations_iter = gpt2_affect(prompts=prompts,
                                        max_len=gen_max_len,
                                        num_samples=gen_samples,
                                        batch_size=gen_batch_size,
+                                       model_name_or_path=model_name_or_path,
+                                       out_file=out_dir / 'generations.jsonl',
+                                       # Affect
                                        target_class=0,
                                        num_classes=2,
-                                       beta=3,
-                                       model_name_or_path=model_name_or_path,
-                                       out_file=out_dir / 'generations.jsonl')
+                                       beta=3)
+    elif model_type == 'gpt2-ctrl':
+        generations_iter = gpt2_ctrl(prompts=prompts,
+                                     max_len=gen_max_len,
+                                     num_samples=gen_samples,
+                                     batch_size=gen_batch_size,
+                                     model_name_or_path=model_name_or_path,
+                                     out_file=out_dir / 'generations.jsonl',
+                                     # GPT2-CTRL
+                                     prompt_ctrl_code='<|nontoxic|>',
+                                     ctrl_codes=['<|nontoxic|>', '<|toxic|>'])
+    elif model_type == 'ctrl':
+        generations_iter = ctrl(prompts=prompts,
+                                max_len=gen_max_len,
+                                num_samples=gen_samples,
+                                model_name_or_path=model_name_or_path,
+                                out_file=out_dir / 'generations.jsonl',
+                                # CTRL
+                                ctrl_code='Links')
     else:
         raise NotImplementedError(f'Model {model_name_or_path} not implemented')
 
