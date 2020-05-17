@@ -7,10 +7,13 @@ from typing import Iterable, List
 
 import click
 import pandas as pd
+import torch
+import torch.nn.functional as F
 from knockknock import slack_sender
 from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
 
+from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.perspective_api_request import perspective_api_request
 from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
@@ -90,15 +93,12 @@ def ctrl(prompts: List[str],
             yield generation
 
 
-def gpt2(prompts: pd.Series,
-         max_len: int,
-         num_samples: int,
-         batch_size: int,
-         model_name_or_path: str,
-         out_file: Path) -> Iterable[str]:
-    # Setup model
-    generator = GPT2Generator(model_name_or_path)
-
+def _gpt2_helper(prompts: pd.Series,
+                 max_len: int,
+                 num_samples: int,
+                 batch_size: int,
+                 generator: GPT2Generator,
+                 out_file: Path):
     # Repeat prompts
     prompts = prompts.repeat(num_samples)
 
@@ -121,6 +121,50 @@ def gpt2(prompts: pd.Series,
             with out_file.open('a') as f:
                 print(json.dumps(generation), file=f)
             yield generation
+
+
+def gpt2_affect(prompts: pd.Series,
+                max_len: int,
+                num_samples: int,
+                batch_size: int,
+                target_class: int,
+                num_classes: int,
+                beta: int,
+                model_name_or_path: str,
+                out_file: Path) -> Iterable[str]:
+    # Setup AffectGPT2 for generation
+    model = AffectGPT2LMHeadModel.from_pretrained(model_name_or_path)
+    generator = GPT2Generator(model)
+    affect_label = F.one_hot(torch.LongTensor([target_class]), num_classes=num_classes).float().to(generator.device)
+    model.set_affect_labels(affect_label)
+    model.affect.beta = beta
+    model.affect.ignore_special_tokens = True
+
+    for generation in _gpt2_helper(prompts=prompts,
+                                   max_len=max_len,
+                                   num_samples=num_samples,
+                                   batch_size=batch_size,
+                                   generator=generator,
+                                   out_file=out_file):
+        yield generation
+
+
+def gpt2(prompts: pd.Series,
+         max_len: int,
+         num_samples: int,
+         batch_size: int,
+         model_name_or_path: str,
+         out_file: Path) -> Iterable[str]:
+    # Setup model
+    generator = GPT2Generator(model_name_or_path)
+
+    for generation in _gpt2_helper(prompts=prompts,
+                                   max_len=max_len,
+                                   num_samples=num_samples,
+                                   batch_size=batch_size,
+                                   generator=generator,
+                                   out_file=out_file):
+        yield generation
 
 
 @click.command()
@@ -169,6 +213,16 @@ def main(out_dir: str,
                                 num_samples=gen_samples,
                                 model_name_or_path=model_name_or_path,
                                 out_file=out_dir / 'generations.jsonl')
+    elif model_type == 'gpt2-affect':
+        generations_iter = gpt2_affect(prompts=prompts,
+                                       max_len=gen_max_len,
+                                       num_samples=gen_samples,
+                                       batch_size=gen_batch_size,
+                                       target_class=0,
+                                       num_classes=2,
+                                       beta=3,
+                                       model_name_or_path=model_name_or_path,
+                                       out_file=out_dir / 'generations.jsonl')
     else:
         raise NotImplementedError(f'Model {model_name_or_path} not implemented')
 
