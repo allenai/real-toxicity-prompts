@@ -17,6 +17,7 @@ from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.perspective_api_request import perspective_api_request
 from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
+from utils.pplm_generation import PPLMGeneration
 from utils.utils import batchify
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
@@ -57,6 +58,33 @@ def load_cache(file: Path):
         with file.open() as f:
             for line in tqdm(f, desc=f'Loading cache from {file}'):
                 yield json.loads(line)
+
+
+def pplm(prompts: pd.Series,
+         max_len: int,
+         num_samples: int,
+         out_file: Path):
+    generator = PPLMGeneration('toxicity', device=0)
+
+    # Resume generation
+    num_cached_generations = 0
+    for generation in load_cache(out_file):
+        yield generation
+        num_cached_generations += 1
+    assert num_cached_generations % num_samples == 0
+
+    # Generate with prompts
+    prompts = prompts[num_cached_generations // num_samples:]
+    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
+        # Generate
+        batch = generator(prompt,
+                          length=max_len,
+                          num_return_sequences=num_samples)
+
+        for generation in batch:
+            with out_file.open('a') as f:
+                print(json.dumps(generation), file=f)
+            yield generation
 
 
 def ctrl(prompts: pd.Series,
@@ -202,7 +230,7 @@ def gpt2(prompts: pd.Series,
 @click.command()
 @click.argument('out_dir')
 @click.option('--dataset_file', required=True, type=str)
-@click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl']))
+@click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl', 'pplm']))
 @click.option('--model_name_or_path', default='gpt2')
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
@@ -268,6 +296,11 @@ def main(out_dir: str,
                                 out_file=out_dir / 'generations.jsonl',
                                 # CTRL
                                 ctrl_code='Links')
+    elif model_type == 'pplm':
+        generations_iter = pplm(prompts=prompts,
+                                max_len=gen_max_len,
+                                num_samples=gen_samples,
+                                out_file=out_dir / 'generations.jsonl')
     else:
         raise NotImplementedError(f'Model {model_name_or_path} not implemented')
 
