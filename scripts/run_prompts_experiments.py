@@ -111,17 +111,26 @@ def ctrl(prompts: pd.Series,
     prompts = prompts[num_cached_generations // num_samples:]
     for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
         # Generate
-        batch = generator(prompt,
-                          num_return_sequences=num_samples,
-                          do_sample=True,
-                          temperature=1.0,
-                          repetition_penalty=1.2,
-                          top_k=0,
-                          top_p=0.9,
-                          max_length=max_len,
-                          return_prompt=False)
+        try:
+            batch = generator(prompt,
+                              num_return_sequences=num_samples,
+                              do_sample=True,
+                              temperature=1.0,
+                              repetition_penalty=1.2,
+                              top_k=0,
+                              top_p=0.9,
+                              max_length=max_len,
+                              return_prompt=False)
+            batch = map(lambda g: g['generated_text'], batch)
+        except RuntimeError as e:
+            print("Error during generation with prompt:", prompt)
+            print(e)
+            print("Emptying CUDA cache and retrying...")
+            torch.cuda.empty_cache()
 
-        for generation in map(lambda g: g['generated_text'], batch):
+            batch = ["GENERATION_ERROR_CUDA"] * num_samples
+
+        for generation in batch:
             with out_file.open('a') as f:
                 print(json.dumps(generation), file=f)
             yield generation
