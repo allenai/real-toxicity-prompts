@@ -3,15 +3,17 @@ import logging
 import math
 from multiprocessing import Process, Queue
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 import click
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import torch.multiprocessing as mp
 from knockknock import slack_sender
 from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
+import numpy as np
 
 from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.perspective_api_request import perspective_api_request
@@ -27,6 +29,13 @@ class PerspectiveWorker:
     SENTINEL = 'STOP'
 
     def __init__(self, out_file: Path, total: int, rps: int):
+        if not rps:
+            print("Disabling perspective (rps is 0)")
+            self.enabled = False
+            return
+
+        self.enabled = True
+
         self.requests_handled = set()
         for response in load_cache(out_file):
             self.requests_handled.add(response['request_id'])
@@ -38,10 +47,16 @@ class PerspectiveWorker:
         self.process.start()
 
     def __call__(self, request_id: str, text: str):
+        if not self.enabled:
+            return
+
         if request_id not in self.requests_handled:
             self.task_queue.put((request_id, text))
 
     def stop(self):
+        if not self.enabled:
+            return
+
         print("Waiting for Perspective to finish...")
         self.task_queue.put(self.SENTINEL)
         self.process.join()
@@ -60,31 +75,44 @@ def load_cache(file: Path):
                 yield json.loads(line)
 
 
+def _pplm_helper(args):
+    generator, prompt, class_label, num_iterations, max_len = args
+    return generator(prompt, class_label=class_label, num_iterations=num_iterations, length=max_len)
+
+
 def pplm(prompts: pd.Series,
          max_len: int,
          num_samples: int,
+         batch_size: int,
+         class_label: int,
+         num_iterations: int,
+         model_name_or_path: str,
          out_file: Path):
-    generator = PPLMGeneration('toxicity', device=0)
+    # Set up PPLM with multiprocessing
+    generator = PPLMGeneration(model_name_or_path, device=0)
+    ctx = mp.get_context('spawn')
+    generator.model.share_memory()
+    generator.classifier.share_memory()
+
+    # Repeat prompts
+    prompts = prompts.repeat(num_samples)
 
     # Resume generation
     num_cached_generations = 0
     for generation in load_cache(out_file):
         yield generation
         num_cached_generations += 1
-    assert num_cached_generations % num_samples == 0
 
     # Generate with prompts
-    prompts = prompts[num_cached_generations // num_samples:]
-    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
-        # Generate
-        batch = generator(prompt,
-                          length=max_len,
-                          num_return_sequences=num_samples)
-
-        for generation in batch:
-            with out_file.open('a') as f:
-                print(json.dumps(generation), file=f)
-            yield generation
+    prompts = prompts[num_cached_generations:]
+    inputs = map(lambda prompt: (generator, prompt, class_label, num_iterations, max_len), prompts)
+    with ctx.Pool(processes=batch_size) as pool:
+        p_iter = pool.imap(_pplm_helper, inputs)
+        for batch in tqdm(p_iter, total=len(prompts), desc='Generation', dynamic_ncols=True):
+            for generation in batch:
+                with out_file.open('a') as f:
+                    print(json.dumps(generation), file=f)
+                yield generation
 
 
 def ctrl(prompts: pd.Series,
@@ -245,6 +273,8 @@ def gpt2(prompts: pd.Series,
 @click.option('--gen_samples', default=25)
 @click.option('--gen_max_len', default=20)
 @click.option('--gen_batch_size', default=32)
+@click.option('--shard', default=None, type=int)
+@click.option('--num_shards', default=0)
 @click.option('--resume/--no-resume', default=False)
 @slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
 def main(out_dir: str,
@@ -255,6 +285,8 @@ def main(out_dir: str,
          gen_samples: int,
          gen_max_len: int,
          gen_batch_size: int,
+         shard: Optional[int],
+         num_shards: Optional[int],
          resume: bool):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=resume)
@@ -262,6 +294,17 @@ def main(out_dir: str,
     # Load dataset
     df = pd.read_csv(dataset_file)
     prompts = df['prompt.text']
+
+    # Select shard
+    if num_shards:
+        assert shard is not None and 0 <= shard < num_shards
+        print("Using shard", shard, "of", num_shards)
+        prompts = np.array_split(prompts, num_shards)[shard]
+    else:
+        print("Using entire dataset")
+
+    print("Prompts:")
+    print(prompts)
 
     # Create perspective worker thread
     perspective = PerspectiveWorker(out_file=out_dir / 'perspective.jsonl',
@@ -309,6 +352,10 @@ def main(out_dir: str,
         generations_iter = pplm(prompts=prompts,
                                 max_len=gen_max_len,
                                 num_samples=gen_samples,
+                                batch_size=gen_batch_size,
+                                class_label=0,
+                                num_iterations=10,
+                                model_name_or_path='toxicity',
                                 out_file=out_dir / 'generations.jsonl')
     else:
         raise NotImplementedError(f'Model {model_name_or_path} not implemented')

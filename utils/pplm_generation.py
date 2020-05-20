@@ -16,7 +16,7 @@
 # limitations under the License.
 
 from operator import add
-from typing import Optional, Union, List
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -189,7 +189,7 @@ def perturb_past(
         loss = 0.0
         loss_list = []
 
-        ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
+        ce_loss = torch.nn.CrossEntropyLoss()
         curr_unpert_past = unpert_past
         curr_probs = torch.unsqueeze(probs, dim=1)
         wte = model.resize_token_embeddings()
@@ -272,17 +272,12 @@ def generate_text_pplm(
         gm_scale=0.9,
         kl_scale=0.01,
         repetition_penalty=1.0,
-        num_return_sequences=1,
 ):
     output_so_far = None
-    if context is not None:
-        if isinstance(context, list):
-            context_t = torch.tensor(context, device=device, dtype=torch.long)
-        else:
-            context_t = context.to(device)
+    if context:
+        context_t = torch.tensor(context, device=device, dtype=torch.long)
         while len(context_t.shape) < 2:
             context_t = context_t.unsqueeze(0)
-        context_t = context_t.repeat_interleave(num_return_sequences, dim=0)  # Repeat context along batch dim
         output_so_far = context_t
 
     grad_norms = None
@@ -290,6 +285,7 @@ def generate_text_pplm(
     unpert_discrim_loss = 0
     loss_in_time = []
     for i in trange(length, desc='Generating with PPLM', disable=True):
+
         # Get past/probs for current output, except for last word
         # Note that GPT takes 2 inputs: past + current_token
 
@@ -311,6 +307,7 @@ def generate_text_pplm(
         # modify the past if necessary
         if not perturb or num_iterations == 0:
             pert_past = past
+
         else:
             accumulated_hidden = unpert_last_hidden[:, :-1, :]
             accumulated_hidden = torch.sum(accumulated_hidden, dim=1)
@@ -351,16 +348,17 @@ def generate_text_pplm(
         pert_probs = F.softmax(pert_logits, dim=-1)
 
         if classifier is not None:
-            ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
+            ce_loss = torch.nn.CrossEntropyLoss()
             prediction = classifier(torch.mean(unpert_last_hidden, dim=1))
             label = torch.tensor([class_label], device=device, dtype=torch.long)
-            label = label.repeat(prediction.size(0))
             unpert_discrim_loss = ce_loss(prediction, label)
+            # print("unperturbed discrim loss", unpert_discrim_loss.data.cpu().numpy())
         else:
             unpert_discrim_loss = 0
 
         # Fuse the modified model and original model
         if perturb:
+
             unpert_probs = F.softmax(unpert_logits[:, -1, :], dim=-1)
 
             pert_probs = (pert_probs ** gm_scale) * (unpert_probs ** (1 - gm_scale))  # + SMALL_CONST
@@ -369,6 +367,7 @@ def generate_text_pplm(
             # rescale
             if torch.sum(pert_probs) <= 1:
                 pert_probs = pert_probs / torch.sum(pert_probs)
+
         else:
             pert_logits = top_k_filter(pert_logits, k=top_k)  # + SMALL_CONST
             pert_probs = F.softmax(pert_logits, dim=-1)
@@ -376,6 +375,7 @@ def generate_text_pplm(
         # sample or greedy
         if sample:
             last = torch.multinomial(pert_probs, num_samples=1)
+
         else:
             _, last = torch.topk(pert_probs, k=1, dim=-1)
 
@@ -421,6 +421,7 @@ class PPLMGeneration(Pipeline):
     # Others (such as sampling) taken from https://github.com/huggingface/transformers/tree/master/examples/pplm
     def __call__(self,
                  cond_text='',
+                 num_samples=1,
                  class_label=-1,
                  length=20,
                  stepsize=0.02,
@@ -437,50 +438,43 @@ class PPLMGeneration(Pipeline):
                  kl_scale=0.01,
                  repetition_penalty=1.0,
                  clean_up_tokenization_spaces=True,
-                 include_context_in_generation=False,
-                 num_return_sequences=1) -> List[str]:
+                 include_context_in_generation=False):
         # Tokenize text
-        if isinstance(cond_text, list):
-            # [self.tokenizer.bos_token + c for c in cond_text]
-            input_ids_batch = self.tokenizer.batch_encode_plus(cond_text)['input_ids']
-            # min_len = max(map(len, input_ids_batch))
-            min_len = 5
-            input_ids_batch = [torch.tensor([self.tokenizer.bos_token_id] + seq[:min_len], dtype=torch.long)
-                               for seq in input_ids_batch]
-            tokenized_cond_text = torch.stack(input_ids_batch)
-        else:
-            tokenized_cond_text = self.tokenizer.encode(self.tokenizer.bos_token + cond_text)
-        print(tokenized_cond_text)
+        tokenized_cond_text = self.tokenizer.encode(self.tokenizer.bos_token + cond_text)
 
         class_id = get_class_id(self.discrim, class_label)
-        pert_gen_tok_text, discrim_loss, loss_in_time = generate_text_pplm(
-            model=self.model,
-            context=tokenized_cond_text,
-            device=self.device,
-            perturb=True,
-            classifier=self.classifier,
-            class_label=class_id,
-            length=length,
-            stepsize=stepsize,
-            temperature=temperature,
-            top_k=top_k,
-            sample=sample,
-            num_iterations=num_iterations,
-            grad_length=grad_length,
-            horizon_length=horizon_length,
-            window_length=window_length,
-            decay=decay,
-            gamma=gamma,
-            gm_scale=gm_scale,
-            kl_scale=kl_scale,
-            repetition_penalty=repetition_penalty,
-            num_return_sequences=num_return_sequences
-        )
 
-        # decode_start_idx = 0 if include_context_in_generation else len(tokenized_cond_text)
-        output_ids = pert_gen_tok_text.tolist()
+        pert_gen_tok_texts = []
+        for i in range(num_samples):
+            pert_gen_tok_text, discrim_loss, loss_in_time = generate_text_pplm(
+                model=self.model,
+                context=tokenized_cond_text,
+                device=self.device,
+                perturb=True,
+                classifier=self.classifier,
+                class_label=class_id,
+                length=length,
+                stepsize=stepsize,
+                temperature=temperature,
+                top_k=top_k,
+                sample=sample,
+                num_iterations=num_iterations,
+                grad_length=grad_length,
+                horizon_length=horizon_length,
+                window_length=window_length,
+                decay=decay,
+                gamma=gamma,
+                gm_scale=gm_scale,
+                kl_scale=kl_scale,
+                repetition_penalty=repetition_penalty,
+            )
+            pert_gen_tok_texts.append(pert_gen_tok_text)
 
-        output_texts = [self.tokenizer.decode(x, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
-                        for x in output_ids]
+        decode_start_idx = 0 if include_context_in_generation else len(tokenized_cond_text)
+        pert_gen_tok_texts = [x[0, decode_start_idx:].tolist() for x in pert_gen_tok_texts]
+        pert_gen_texts = [
+            self.tokenizer.decode(pert_gen_tok_text, clean_up_tokenization_spaces=clean_up_tokenization_spaces)
+            for pert_gen_tok_text in pert_gen_tok_texts
+        ]
 
-        return output_texts
+        return pert_gen_texts
