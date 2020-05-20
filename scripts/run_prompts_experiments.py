@@ -186,7 +186,15 @@ def _gpt2_helper(prompts: pd.Series,
                        desc=f'Batch generation (bs={batch_size})',
                        dynamic_ncols=True):
         # Generate
-        batch = generator.generate(prompt, max_len)
+        try:
+            batch = generator.generate(prompt, max_len)
+        except RuntimeError as e:
+            print("Error during generation with prompt:", prompt)
+            print(e)
+            print("Emptying CUDA cache and retrying...")
+            torch.cuda.empty_cache()
+
+            batch = ["GENERATION_ERROR_CUDA"] * len(prompt)
 
         for generation in batch:
             with out_file.open('a') as f:
