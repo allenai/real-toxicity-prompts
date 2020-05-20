@@ -199,13 +199,19 @@ def gpt2_ctrl(prompts: pd.Series,
               num_samples: int,
               batch_size: int,
               prompt_ctrl_code: str,
-              ctrl_codes: List[str],
               model_name_or_path: str,
               out_file: Path):
-    # Use default gpt2 architecture with additional tokens in vocab
+    # Use default gpt2 architecture
     generator = GPT2Generator(model_name_or_path)
+
+    # Add some special tokens (inline metadata)
+    with open(Path(model_name_or_path) / 'added_tokens.json') as f:
+        ctrl_codes = list(json.load(f).keys())
+    assert prompt_ctrl_code in ctrl_codes
+    print('Added tokens:', ctrl_codes)
     num_tokens_added = generator.tokenizer.add_tokens(ctrl_codes)
-    assert num_tokens_added == 2
+    assert num_tokens_added == len(ctrl_codes)
+    print("Tokenizer vocab size:", generator.tokenizer.vocab_size)
 
     # Prepend ctrl code to prompts
     prompts = prompt_ctrl_code + prompts
@@ -342,8 +348,7 @@ def main(out_dir: str,
                                      model_name_or_path=model_name_or_path,
                                      out_file=generations_file,
                                      # GPT2-CTRL
-                                     prompt_ctrl_code='<|nontoxic|>',
-                                     ctrl_codes=['<|nontoxic|>', '<|toxic|>'])
+                                     prompt_ctrl_code='<|nontoxic|>')
     elif model_type == 'ctrl':
         generations_iter = ctrl(prompts=prompts,
                                 max_len=gen_max_len,
