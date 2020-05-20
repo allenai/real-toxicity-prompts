@@ -4,12 +4,10 @@ import dask
 import dask.array as da
 import numpy as np
 from tqdm.auto import tqdm
-from transformers import GPT2Config
 
-# Get GPT-2 constants
-config = GPT2Config.from_pretrained('gpt2')
-EOS = config.eos_token_id
-vocab_size = config.vocab_size
+# GPT-2 constants
+EOS = 50256
+vocab_size = EOS + 1
 
 
 def load_meta(bpe_dir: Path):
