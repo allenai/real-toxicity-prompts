@@ -300,14 +300,18 @@ def main(out_dir: str,
         assert shard is not None and 0 <= shard < num_shards
         print("Using shard", shard, "of", num_shards)
         prompts = np.array_split(prompts, num_shards)[shard]
+        generations_file = out_dir / f'generations_shard_{shard}_of_{num_shards}.jsonl'
+        perspective_file = out_dir / f'perspective_shard_{shard}_of_{num_shards}.jsonl'
     else:
         print("Using entire dataset")
+        generations_file = out_dir / 'generations.jsonl'
+        perspective_file = out_dir / 'perspective.jsonl'
 
     print("Prompts:")
     print(prompts)
 
     # Create perspective worker thread
-    perspective = PerspectiveWorker(out_file=out_dir / 'perspective.jsonl',
+    perspective = PerspectiveWorker(out_file=perspective_file,
                                     total=len(df) * gen_samples,
                                     rps=perspective_rps)
 
@@ -318,14 +322,14 @@ def main(out_dir: str,
                                 num_samples=gen_samples,
                                 batch_size=gen_batch_size,
                                 model_name_or_path=model_name_or_path,
-                                out_file=out_dir / 'generations.jsonl')
+                                out_file=generations_file)
     elif model_type == 'gpt2-affect':
         generations_iter = gpt2_affect(prompts=prompts,
                                        max_len=gen_max_len,
                                        num_samples=gen_samples,
                                        batch_size=gen_batch_size,
                                        model_name_or_path=model_name_or_path,
-                                       out_file=out_dir / 'generations.jsonl',
+                                       out_file=generations_file,
                                        # Affect
                                        target_class=0,
                                        num_classes=2,
@@ -336,7 +340,7 @@ def main(out_dir: str,
                                      num_samples=gen_samples,
                                      batch_size=gen_batch_size,
                                      model_name_or_path=model_name_or_path,
-                                     out_file=out_dir / 'generations.jsonl',
+                                     out_file=generations_file,
                                      # GPT2-CTRL
                                      prompt_ctrl_code='<|nontoxic|>',
                                      ctrl_codes=['<|nontoxic|>', '<|toxic|>'])
@@ -345,7 +349,7 @@ def main(out_dir: str,
                                 max_len=gen_max_len,
                                 num_samples=gen_samples,
                                 model_name_or_path=model_name_or_path,
-                                out_file=out_dir / 'generations.jsonl',
+                                out_file=generations_file,
                                 # CTRL
                                 ctrl_code='Links')
     elif model_type == 'pplm':
@@ -356,7 +360,7 @@ def main(out_dir: str,
                                 class_label=0,
                                 num_iterations=10,
                                 model_name_or_path='toxicity',
-                                out_file=out_dir / 'generations.jsonl')
+                                out_file=generations_file)
     else:
         raise NotImplementedError(f'Model {model_name_or_path} not implemented')
 
