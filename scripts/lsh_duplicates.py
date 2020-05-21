@@ -4,7 +4,7 @@ from typing import List
 from joblib import Memory, Parallel, delayed, dump
 from lsh import cache, minhash
 import numpy as np
-from itertools import chain, islice
+from itertools import chain
 
 from utils.constants import DATA_DIR, OUTPUT_DIR
 from utils.webtext import load_meta, split_docs
@@ -53,8 +53,8 @@ def corpus_iter(files: List[Path], name: str):
 
 def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path):
     corpus = chain(
-        islice(corpus_iter(wt_files, name='wt'), 100),
-        islice(corpus_iter(owtc_files, name='owtc'), 100)
+        corpus_iter(wt_files, name='wt'),
+        corpus_iter(owtc_files, name='owtc'),
     )
     hasher, cache = train(document_feed=corpus,
                           char_ngram=char_ngram,
