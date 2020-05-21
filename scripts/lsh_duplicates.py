@@ -32,6 +32,7 @@ def train(document_feed, char_ngram=3, seeds=100, bands=5, hashbytes=4, n_jobs=1
         for doc_id, doc in document_feed
     )
 
+    # TODO: parallelize this part
     lshcache = cache.Cache(num_bands=bands, hasher=hasher)
     for doc_id, fingerprint in tqdm(out, 'Adding fingerprints to cache'):
         lshcache.add_fingerprint(fingerprint, doc_id=doc_id)
@@ -81,15 +82,21 @@ def main():
     experiments = [
         {'char_ngram': 3, 'seeds': 100, 'bands': 10},  # 10 bands
         {'char_ngram': 2, 'seeds': 100, 'bands': 5},  # Smaller shingles
-        {'char_ngram': 3, 'seeds': 100, 'bands': 20},  # 20 bands
-        {'char_ngram': 5, 'seeds': 100, 'bands': 5},  # Bigger shingles
+        # FIXME: 20 bands takes too long (too many duplicates)
+        # {'char_ngram': 3, 'seeds': 100, 'bands': 20},  # 20 bands
         {'char_ngram': 3, 'seeds': 100, 'bands': 5},  # Original experiment
+        {'char_ngram': 5, 'seeds': 100, 'bands': 5},  # Bigger shingles
     ]
 
     for kwargs in experiments:
         out_dirname = '_'.join([f"{k}_{v}" for k, v in kwargs.items()])
         out_dir = OUTPUT_DIR / 'lsh_duplicates' / out_dirname
+        if out_dir.exists():
+            continue
         out_dir.mkdir(parents=True)
+
+        print('*' * 100)
+        print('Starting', out_dirname)
         try:
             run_lsh(**kwargs, n_jobs=NUM_JOBS, out_dir=out_dir)
         except Exception as e:
