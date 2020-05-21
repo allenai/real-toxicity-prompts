@@ -2,9 +2,11 @@ import json
 import time
 import collections
 from pathlib import Path
+import socket
 from typing import List, Union, Optional, Iterable, Tuple
 
 import click
+import httplib2
 from googleapiclient import discovery
 from googleapiclient.discovery import Resource
 from tqdm.auto import tqdm
@@ -46,7 +48,13 @@ class PerspectiveAPI:
             batch_request.add(self._make_request(text, self.service), callback=response_callback, request_id=request_id)
 
         # Make API request
-        batch_request.execute()
+        try:
+            batch_request.execute()
+        except (httplib2.HttpLib2Error, socket.timeout) as e:
+            print("Error while executing request with ids:", *responses.keys())
+            print(e)
+            print("Returning errors for batch. Please retry this request again later.")
+            responses = {request_id: (None, str(e)) for request_id, _ in batch}
 
         # Return list of tuples of (request_id, (response, exception)) in same order as request_id in input
         # (dict keys have insertion order guarantee in Python 3.7+)
