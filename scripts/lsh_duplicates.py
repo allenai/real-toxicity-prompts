@@ -76,7 +76,7 @@ def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path)
     dump(all_duplicates, out_dir / 'all_duplicates.joblib')
 
 
-if __name__ == '__main__':
+def main():
     NUM_JOBS = 96
     experiments = [
         {'char_ngram': 3, 'seeds': 100, 'bands': 10},  # 10 bands
@@ -94,3 +94,7 @@ if __name__ == '__main__':
             run_lsh(**kwargs, n_jobs=NUM_JOBS, out_dir=out_dir)
         except Exception as e:
             print("Exception during experiment ", out_dirname)
+
+
+if __name__ == '__main__':
+    main()
