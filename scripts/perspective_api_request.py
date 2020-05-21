@@ -146,7 +146,12 @@ def main(corpus, responses_file, api_key, requests_per_second):
     elif corpus.is_file():
         # Read corpus into memory if it's a single file
         print('Reading file into memory...')
-        corpus = corpus.open().readlines()
+        if corpus.suffix == '.jsonl':
+            with open(corpus) as f:
+                # Create a list of tuples (request_id, str)
+                corpus = [next(iter(line.items())) for line in map(json.loads, f)]
+        else:
+            corpus = corpus.open().readlines()
     elif corpus.is_dir():
         # Create list of files of it's a directory
         print('Loading list of files in corpus...')
