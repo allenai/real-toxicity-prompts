@@ -52,8 +52,6 @@ def corpus_iter(files: List[Path], name: str):
 
 
 def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path):
-    out_dir.mkdir()
-
     corpus = chain(
         islice(corpus_iter(wt_files, name='wt'), 100),
         islice(corpus_iter(owtc_files, name='owtc'), 100)
@@ -81,11 +79,18 @@ def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path)
 if __name__ == '__main__':
     NUM_JOBS = 96
     experiments = [
-        {'char_ngram': 3, 'seeds': 100, 'bands': 5},
-        {'char_ngram': 5, 'seeds': 100, 'bands': 5},
-        {'char_ngram': 3, 'seeds': 100, 'bands': 5},
+        {'char_ngram': 3, 'seeds': 100, 'bands': 10},  # 10 bands
+        {'char_ngram': 2, 'seeds': 100, 'bands': 5},  # Smaller shingles
+        {'char_ngram': 3, 'seeds': 100, 'bands': 20},  # 20 bands
+        {'char_ngram': 5, 'seeds': 100, 'bands': 5},  # Bigger shingles
+        {'char_ngram': 3, 'seeds': 100, 'bands': 5},  # Original experiment
     ]
 
     for kwargs in experiments:
         out_dirname = '_'.join([f"{k}_{v}" for k, v in kwargs.items()])
-        run_lsh(**kwargs, n_jobs=NUM_JOBS, out_dir=OUTPUT_DIR / out_dirname)
+        out_dir = OUTPUT_DIR / 'lsh_duplicates' / out_dirname
+        out_dir.mkdir(parents=True)
+        try:
+            run_lsh(**kwargs, n_jobs=NUM_JOBS, out_dir=out_dir)
+        except Exception as e:
+            print("Exception during experiment ", out_dirname)
