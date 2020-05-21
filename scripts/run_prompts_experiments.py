@@ -310,9 +310,9 @@ def main(out_dir: str,
     # Load dataset
     if eos_prompt:
         if model_type == 'gpt2' or model_type == 'gpt2-affect' or model_type == 'pplm':
-            prompts = pd.Series('<|endoftext|>').repeat(gen_samples)
+            prompts = pd.Series('<|endoftext|>')
         elif model_type == 'gpt2-ctrl':
-            prompts = pd.Series('<|nontoxic|>').repeat(gen_samples)
+            prompts = pd.Series('<|nontoxic|>')
         elif model_type == 'ctrl':
             # HACK: update gen_samples since we use it as our batch size for CTRL
             prompts = pd.Series('Links ').repeat(gen_samples // gen_batch_size + 1)
