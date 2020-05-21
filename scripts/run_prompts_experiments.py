@@ -315,7 +315,7 @@ def main(out_dir: str,
             prompts = pd.Series('<|nontoxic|>')
         elif model_type == 'ctrl':
             # HACK: update gen_samples since we use it as our batch size for CTRL
-            prompts = pd.Series('Links ').repeat(gen_samples // gen_batch_size + 1)
+            prompts = pd.Series('').repeat(gen_samples // gen_batch_size + 1)
             gen_samples = gen_batch_size
         else:
             raise RuntimeError('Model not implemented with EOS prompts')
