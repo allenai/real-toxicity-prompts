@@ -280,7 +280,8 @@ def gpt2(prompts: pd.Series,
 
 @click.command()
 @click.argument('out_dir')
-@click.option('--dataset_file', required=True, type=str)
+@click.option('--dataset_file', required=False, type=str)
+@click.option('--eos_prompt/--no_eos_prompt', default=False)
 @click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl', 'pplm']))
 @click.option('--model_name_or_path', default='gpt2')
 @click.option('--perspective_rps', default=25)
@@ -292,7 +293,8 @@ def gpt2(prompts: pd.Series,
 @click.option('--resume/--no-resume', default=False)
 @slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
 def main(out_dir: str,
-         dataset_file: str,
+         eos_prompt: bool,
+         dataset_file: Optional[str],
          model_type: str,
          model_name_or_path: str,
          perspective_rps: int,
@@ -306,8 +308,22 @@ def main(out_dir: str,
     out_dir.mkdir(parents=True, exist_ok=resume)
 
     # Load dataset
-    df = pd.read_csv(dataset_file)
-    prompts = df['prompt.text']
+    if eos_prompt:
+        if model_type == 'gpt2' or model_type == 'gpt2-affect' or model_type == 'pplm':
+            prompts = pd.Series('<|endoftext|>').repeat(gen_samples)
+        elif model_type == 'gpt2-ctrl':
+            prompts = pd.Series('<|nontoxic|>').repeat(gen_samples)
+        elif model_type == 'ctrl':
+            # HACK: update gen_samples since we use it as our batch size for CTRL
+            prompts = pd.Series('Links ').repeat(gen_samples // gen_batch_size + 1)
+            gen_samples = gen_batch_size
+        else:
+            raise RuntimeError('Model not implemented with EOS prompts')
+    elif dataset_file:
+        df = pd.read_csv(dataset_file)
+        prompts = df['prompt.text']
+    else:
+        raise click.exceptions.MissingParameter('Missing dataset file or eos prompt option')
 
     # Select shard
     if num_shards:
@@ -326,7 +342,7 @@ def main(out_dir: str,
 
     # Create perspective worker thread
     perspective = PerspectiveWorker(out_file=perspective_file,
-                                    total=len(df) * gen_samples,
+                                    total=len(prompts) * gen_samples,
                                     rps=perspective_rps)
 
     # Generate and request perspective scores
