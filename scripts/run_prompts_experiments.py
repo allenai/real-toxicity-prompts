@@ -283,7 +283,7 @@ def gpt2(prompts: pd.Series,
 @click.option('--dataset_file', required=False, type=str)
 @click.option('--eos_prompt/--no_eos_prompt', default=False)
 @click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl', 'pplm']))
-@click.option('--model_name_or_path', default='gpt2')
+@click.option('--model_name_or_path', required=True)
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
 @click.option('--gen_max_len', default=20)
