@@ -363,7 +363,7 @@ def main(out_dir: str,
                                        # Affect
                                        target_class=0,
                                        num_classes=2,
-                                       beta=3)
+                                       beta=1)
     elif model_type == 'gpt2-ctrl':
         generations_iter = gpt2_ctrl(prompts=prompts,
                                      max_len=gen_max_len,
