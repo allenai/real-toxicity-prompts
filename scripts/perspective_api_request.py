@@ -2,9 +2,11 @@ import json
 import time
 import collections
 from pathlib import Path
+import socket
 from typing import List, Union, Optional, Iterable, Tuple
 
 import click
+import httplib2
 from googleapiclient import discovery
 from googleapiclient.discovery import Resource
 from tqdm.auto import tqdm
@@ -46,7 +48,13 @@ class PerspectiveAPI:
             batch_request.add(self._make_request(text, self.service), callback=response_callback, request_id=request_id)
 
         # Make API request
-        batch_request.execute()
+        try:
+            batch_request.execute()
+        except (httplib2.HttpLib2Error, socket.timeout) as e:
+            print("Error while executing request with ids:", *responses.keys())
+            print(e)
+            print("Returning errors for batch. Please retry this request again later.")
+            responses = {request_id: (None, str(e)) for request_id, _ in batch}
 
         # Return list of tuples of (request_id, (response, exception)) in same order as request_id in input
         # (dict keys have insertion order guarantee in Python 3.7+)
@@ -138,7 +146,12 @@ def main(corpus, responses_file, api_key, requests_per_second):
     elif corpus.is_file():
         # Read corpus into memory if it's a single file
         print('Reading file into memory...')
-        corpus = corpus.open().readlines()
+        if corpus.suffix == '.jsonl':
+            with open(corpus) as f:
+                # Create a list of tuples (request_id, str)
+                corpus = [next(iter(line.items())) for line in map(json.loads, f)]
+        else:
+            corpus = corpus.open().readlines()
     elif corpus.is_dir():
         # Create list of files of it's a directory
         print('Loading list of files in corpus...')
