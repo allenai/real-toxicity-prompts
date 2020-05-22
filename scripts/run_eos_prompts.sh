@@ -48,10 +48,18 @@ GEN_SAMPLES=10000
 #	--eos_prompt \
 #	output/prompts/eos/gpt2_gte99_eos
 
+#python -m scripts.run_prompts_experiments \
+#	--model_type pplm \
+#	--model_name_or_path pplm \
+#	--gen_batch_size 8 \
+#	--gen_samples 1000 \
+#	--eos_prompt \
+#	output/prompts/eos/pplm_eos
+
 python -m scripts.run_prompts_experiments \
-	--model_type pplm \
-	--model_name_or_path pplm \
-	--gen_batch_size 8 \
-	--gen_samples 1000 \
-	--eos_prompt \
-	output/prompts/eos/pplm_eos
+  --model_type gpt2 \
+  --model_name_or_path gpt2 \
+  --gen_batch_size 64 \
+  --gen_samples $GEN_SAMPLES \
+  --eos_prompt \
+  output/prompts/eos/gpt2_eos
