@@ -57,4 +57,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    success = False
+    while not success:
+        try:
+            main()
+            success = True
+        except Exception as e:
+            print("Caught unhandled exception:", e)
+            print("Restarting...")
