@@ -13,12 +13,12 @@ WEBTEXT_SIZE = 8_282_020
 SHARD_SIZE = 414_101  # HACK: all webtext shards are this size
 
 
-def corpus_iter(files: List[Path], offset_i: int) -> Iterable[str]:
+def corpus_iter(corpus_dir: Path, offset_i: int) -> Iterable[str]:
     """
     Yield a request id (simply the document index as a string) and a document string
     """
-    files = sorted([file for file in files if file.suffix == '.joblib'])
-    print(*(file.stem for file in files))
+    files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
+    print(*(file.stem for file in files), sep='\n')
 
     total_i = 0
     for file in files:
