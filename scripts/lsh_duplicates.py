@@ -52,7 +52,7 @@ def corpus_iter(files: List[Path], name: str):
             i += 1
 
 
-def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path):
+def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path, save_bins: bool = False):
     corpus = chain(
         corpus_iter(wt_files, name='wt'),
         corpus_iter(owtc_files, name='owtc'),
@@ -69,8 +69,8 @@ def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path)
     fingerprints_arr = np.stack(fingerprints)
     np.save(out_dir / 'fingerprints.npy', fingerprints_arr)
 
-    # Save bins
-    dump(cache.bins, out_dir / 'bins.joblib')
+    if save_bins:
+        dump(cache.bins, out_dir / 'bins.joblib')
 
     # Save duplicates
     all_duplicates = cache.get_all_duplicates()
