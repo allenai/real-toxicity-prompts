@@ -18,7 +18,6 @@ def corpus_iter(corpus_dir: Path, offset_i: int) -> Iterable[str]:
     Yield a request id (simply the document index as a string) and a document string
     """
     files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
-    print(*(file.stem for file in files), sep='\n')
 
     total_i = 0
     for file in files:
@@ -26,6 +25,8 @@ def corpus_iter(corpus_dir: Path, offset_i: int) -> Iterable[str]:
         for shard_i in range(SHARD_SIZE):
             # Only start returning documents after reaching the offset
             if total_i >= offset_i:
+                if not docs:
+                    tqdm.write('Loading', file)
                 docs = docs or load(file)  # Lazy-load docs
                 yield str(total_i), docs[shard_i]
 
