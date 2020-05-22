@@ -25,9 +25,9 @@ def corpus_iter(corpus_dir: Path, offset_i: int) -> Iterable[str]:
         for shard_i in range(SHARD_SIZE):
             # Only start returning documents after reaching the offset
             if total_i >= offset_i:
-                if not docs:
-                    tqdm.write('Loading', file)
-                docs = docs or load(file)  # Lazy-load docs
+                if not docs:  # Lazy load documents
+                    tqdm.write(f'Loading {file}')
+                    docs = load(file)
                 yield str(total_i), docs[shard_i]
 
             total_i += 1
@@ -37,19 +37,23 @@ def main():
     webtext_dir = DATA_DIR / 'webtext_detokenized'
     out_file = OUTPUT_DIR / 'webtext_scores.jsonl'
 
+    pbar = tqdm(total=WEBTEXT_SIZE, dynamic_ncols=True, desc='Perspective API')
+
     # Calculate offset
     offset = 0
     if out_file.exists():
+        pbar.set_description('Loading cached files')
         # Check file for consistency and find offset
         for line in load_jsonl(out_file):
             assert int(line['request_id']) == offset
             offset += 1
+            pbar.update(1)
     # POST-CONDITION: offset is now one more than the number of already-computed responses
 
     # Request scores
     perspective_api_request(corpus=corpus_iter(webtext_dir, offset),
                             responses_file=out_file,
-                            pbar=tqdm(total=WEBTEXT_SIZE - offset, dynamic_ncols=True))
+                            pbar=pbar)
 
 
 if __name__ == '__main__':
