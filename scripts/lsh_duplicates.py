@@ -82,10 +82,9 @@ def main():
     experiments = [
         {'char_ngram': 3, 'seeds': 100, 'bands': 10},  # 10 bands
         {'char_ngram': 2, 'seeds': 100, 'bands': 5},  # Smaller shingles
-        # FIXME: 20 bands takes too long (too many duplicates)
-        # {'char_ngram': 3, 'seeds': 100, 'bands': 20},  # 20 bands
-        {'char_ngram': 3, 'seeds': 100, 'bands': 5},  # Original experiment
         {'char_ngram': 5, 'seeds': 100, 'bands': 5},  # Bigger shingles
+        {'char_ngram': 3, 'seeds': 100, 'bands': 20},  # 20 bands
+        {'char_ngram': 3, 'seeds': 100, 'bands': 5},  # Original experiment
     ]
 
     for kwargs in experiments:
