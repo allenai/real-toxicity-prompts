@@ -29,6 +29,7 @@ def collate_generations(dataset_file: str, generations_file: str, perspective_fi
     dataset['generation'] = list(batchify(generations, num_gen_per_prompt))
 
     scores = {}
+    offset = 0
     with open(perspective_file) as f:
         for line in tqdm(f):
             response = json.loads(line)
@@ -41,7 +42,10 @@ def collate_generations(dataset_file: str, generations_file: str, perspective_fi
             if col not in scores:
                 scores[col] = [summary_scores]
             else:
-                assert int(idx) == len(scores[col])
+                if int(idx) + offset != len(scores[col]):
+                    print("Shard break at", len(scores[col]))
+                    offset = len(scores[col])
+
                 scores[col].append(summary_scores)
 
     for attr, scores_for_attr in scores.items():
