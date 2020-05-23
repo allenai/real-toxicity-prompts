@@ -16,14 +16,13 @@ def unpack_openwebtext(archive: str, out_dir: str):
     tmp_dir = Path(tempfile.mkdtemp(prefix='openwebtext'))
     print("Unpacking subset archives to", tmp_dir)
     unpack_archive(archive, extract_dir=tmp_dir)
-
-    subset_dir = tmp_dir / 'openwebtext'
-    subset_tarfiles = [x for x in subset_dir.iterdir()]
+    subset_tarfiles = [x for x in (tmp_dir / 'openwebtext').iterdir()]
 
     print("Unpacking corpus to", out_dir)
+    subset_out_dirs = [out_dir / subset.stem for subset in subset_tarfiles]
     Parallel(n_jobs=16)(
-        delayed(unpack_archive)(tarfile_path, out_dir, 'xztar')
-        for tarfile_path in subset_tarfiles
+        delayed(unpack_archive)(tarfile_path, subset_out_dir, 'xztar')
+        for tarfile_path, subset_out_dir in zip(subset_tarfiles, subset_out_dirs)
     )
 
     rmtree(tmp_dir)
