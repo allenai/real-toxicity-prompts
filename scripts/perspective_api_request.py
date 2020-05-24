@@ -92,7 +92,7 @@ def perspective_api_request(corpus: Union[Iterable[Document], str],
                             responses_file: Optional[Path] = None,
                             api_key: str = PERSPECTIVE_API_KEY,
                             requests_per_second: int = 25,
-                            pbar: tqdm = None) -> List[dict]:
+                            pbar: tqdm = None):
     if isinstance(corpus, str):
         corpus = [corpus]
 
@@ -105,7 +105,6 @@ def perspective_api_request(corpus: Union[Iterable[Document], str],
 
     i = 0
     num_failures = 0
-    responses: List[dict] = []
     for batch in batchify(corpus, requests_per_second):
         batch = prepare_batch(batch, offset=i)
         for request_id, (response, exception) in perspective_api.request(batch):
@@ -118,7 +117,6 @@ def perspective_api_request(corpus: Union[Iterable[Document], str],
             }
 
             # Save response
-            responses.append(response_dict)
             if responses_file:
                 with responses_file.open('a') as f:
                     print(json.dumps(response_dict), file=f)
@@ -129,8 +127,6 @@ def perspective_api_request(corpus: Union[Iterable[Document], str],
         i += requests_per_second
         pbar.update(len(batch))
         pbar.set_description(f'Perspective API ({num_failures} failures)')
-
-    return responses
 
 
 @click.command()
