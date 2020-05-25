@@ -1,19 +1,20 @@
 import json
 import logging
 import math
+from functools import partial
 from multiprocessing import Process, Queue
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, Optional
 
 import click
+import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import torch.multiprocessing as mp
+import torch.nn.functional as F
 from knockknock import slack_sender
 from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
-import numpy as np
 
 from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.perspective_api_request import perspective_api_request
@@ -75,11 +76,6 @@ def load_cache(file: Path):
                 yield json.loads(line)
 
 
-def _pplm_helper(args):
-    generator, prompt, class_label, num_iterations, max_len = args
-    return generator(prompt, class_label=class_label, num_iterations=num_iterations, length=max_len)
-
-
 def pplm(prompts: pd.Series,
          max_len: int,
          num_samples: int,
@@ -93,6 +89,7 @@ def pplm(prompts: pd.Series,
     ctx = mp.get_context('spawn')
     generator.model.share_memory()
     generator.classifier.share_memory()
+    pplm_func = partial(generator.__call__, class_label=class_label, num_iterations=num_iterations, length=max_len)
 
     # Repeat prompts
     prompts = prompts.repeat(num_samples)
@@ -105,10 +102,8 @@ def pplm(prompts: pd.Series,
 
     # Generate with prompts
     prompts = prompts[num_cached_generations:]
-    inputs = map(lambda prompt: (generator, prompt, class_label, num_iterations, max_len), prompts)
     with ctx.Pool(processes=batch_size) as pool:
-        p_iter = pool.imap(_pplm_helper, inputs)
-        for batch in tqdm(p_iter, total=len(prompts), desc='Generation', dynamic_ncols=True):
+        for batch in tqdm(pool.imap(pplm_func, prompts), total=len(prompts), desc='Generation', dynamic_ncols=True):
             for generation in batch:
                 with out_file.open('a') as f:
                     print(json.dumps(generation), file=f)
