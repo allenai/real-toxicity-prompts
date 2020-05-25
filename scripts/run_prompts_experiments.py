@@ -325,8 +325,8 @@ def main(out_dir: str,
         assert shard is not None and 0 <= shard < num_shards
         print("Using shard", shard, "of", num_shards)
         prompts = np.array_split(prompts, num_shards)[shard]
-        generations_file = out_dir / f'generations_shard_{shard}_of_{num_shards}.jsonl'
-        perspective_file = out_dir / f'perspective_shard_{shard}_of_{num_shards}.jsonl'
+        generations_file = out_dir / f'generations_shard_{shard}_of_{num_shards - 1}.jsonl'
+        perspective_file = out_dir / f'perspective_shard_{shard}_of_{num_shards - 1}.jsonl'
     else:
         print("Using entire dataset")
         generations_file = out_dir / 'generations.jsonl'
