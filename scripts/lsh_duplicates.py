@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import pickle
 from itertools import chain
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def corpus_iter(corpus_dir: Path, name: str):
             i += 1
 
 
-def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path, save_bins: bool = False):
+def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path):
     corpus = chain(
         corpus_iter(DATA_DIR / 'detokenized_webtext', name='wt'),
         corpus_iter(DATA_DIR / 'openwebtext_shards', name='owtc'),
@@ -73,16 +74,15 @@ def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path,
 
     # Save fingerprints and doc ids
     doc_ids, fingerprints = zip(*cache.fingerprints.items())
-    dump(doc_ids, out_dir / 'doc_ids.joblib')
+    with open(out_dir / 'doc_ids.pkl', 'wb') as f:
+        pickle.dump(doc_ids, f)
     fingerprints_arr = np.stack(fingerprints)
     np.save(out_dir / 'fingerprints.npy', fingerprints_arr)
 
-    if save_bins:
-        dump(cache.bins, out_dir / 'bins.joblib')
-
     # Save duplicates
     all_duplicates = cache.get_all_duplicates()
-    dump(all_duplicates, out_dir / 'all_duplicates.joblib')
+    with open(out_dir / 'all_duplicates.pkl', 'wb') as f:
+        pickle.dump(all_duplicates, f)
 
 
 def main():
