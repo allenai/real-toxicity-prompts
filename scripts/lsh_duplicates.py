@@ -9,6 +9,8 @@ from tqdm.auto import tqdm
 
 from utils.constants import DATA_DIR, OUTPUT_DIR
 
+TOTAL = 8_282_020 + 8_013_769
+
 
 class Fingerprinter:
     def __init__(self, hasher):
@@ -26,9 +28,10 @@ def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int
     lshcache = cache.Cache(num_bands=bands, hasher=hasher)
     fingerprinter = Fingerprinter(hasher)
     with mp.Pool(processes=n_jobs) as pool:
-        for doc_id, fingerprint in tqdm(pool.imap(fingerprinter.fingerprint, document_feed, chunksize=10_000),
+        for doc_id, fingerprint in tqdm(pool.starmap(fingerprinter.fingerprint, document_feed, chunksize=10_000),
                                         desc='Hashing',
-                                        dynamic_ncols=True):
+                                        dynamic_ncols=True,
+                                        total=TOTAL):
             lshcache.add_fingerprint(fingerprint, doc_id=doc_id)
 
     return hasher, lshcache
