@@ -16,7 +16,8 @@ class Fingerprinter:
     def __init__(self, hasher):
         self.hasher = hasher
 
-    def fingerprint(self, doc_id, doc):
+    def fingerprint(self, item):
+        doc_id, doc = item
         return doc_id, self.hasher.fingerprint(doc)
 
 
@@ -28,7 +29,7 @@ def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int
     lshcache = cache.Cache(num_bands=bands, hasher=hasher)
     fingerprinter = Fingerprinter(hasher)
     with mp.Pool(processes=n_jobs) as pool:
-        for doc_id, fingerprint in tqdm(pool.starmap(fingerprinter.fingerprint, document_feed, chunksize=10_000),
+        for doc_id, fingerprint in tqdm(pool.imap(fingerprinter.fingerprint, document_feed, chunksize=10_000),
                                         desc='Hashing',
                                         dynamic_ncols=True,
                                         total=TOTAL):
