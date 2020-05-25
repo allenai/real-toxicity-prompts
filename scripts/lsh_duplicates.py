@@ -1,12 +1,21 @@
+import multiprocessing as mp
 from itertools import chain
 from pathlib import Path
 
 import numpy as np
-from joblib import Parallel, delayed, dump, load
+from joblib import dump, load
 from lsh import cache, minhash
 from tqdm.auto import tqdm
 
 from utils.constants import DATA_DIR, OUTPUT_DIR
+
+
+class Fingerprinter:
+    def __init__(self, hasher):
+        self.hasher = hasher
+
+    def fingerprint(self, doc_id, doc):
+        return doc_id, self.hasher.fingerprint(doc)
 
 
 def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int = 4, n_jobs: int = 1):
@@ -14,15 +23,13 @@ def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int
     if seeds % bands != 0:
         raise ValueError('Seeds has to be a multiple of bands. {} % {} != 0'.format(seeds, bands))
 
-    out = Parallel(n_jobs=n_jobs, verbose=1, backend='threading')(
-        delayed(lambda doc_id, doc: (doc_id, hasher.fingerprint(doc)))(doc_id, doc)
-        for doc_id, doc in document_feed
-    )
-
-    # TODO: parallelize this part
     lshcache = cache.Cache(num_bands=bands, hasher=hasher)
-    for doc_id, fingerprint in tqdm(out, 'Adding fingerprints to cache'):
-        lshcache.add_fingerprint(fingerprint, doc_id=doc_id)
+    fingerprinter = Fingerprinter(hasher)
+    with mp.Pool(processes=n_jobs) as pool:
+        for doc_id, fingerprint in tqdm(pool.imap(fingerprinter.fingerprint, document_feed, chunksize=10_000),
+                                        desc='Hashing',
+                                        dynamic_ncols=True):
+            lshcache.add_fingerprint(fingerprint, doc_id=doc_id)
 
     return hasher, lshcache
 
