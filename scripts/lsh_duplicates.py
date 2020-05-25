@@ -22,7 +22,7 @@ owtc_meta = cached_meta(DATA_DIR / 'openwebtext_bpe')
 owtc_files = owtc_meta[0]
 
 
-def train(document_feed, char_ngram=3, seeds=100, bands=5, hashbytes=4, n_jobs=1):
+def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int = 4, n_jobs: int = 1):
     hasher = minhash.MinHasher(seeds=seeds, char_ngram=char_ngram, hashbytes=hashbytes)
     if seeds % bands != 0:
         raise ValueError('Seeds has to be a multiple of bands. {} % {} != 0'.format(seeds, bands))
@@ -80,15 +80,11 @@ def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path,
 def main():
     NUM_JOBS = 96
     experiments = [
-        {'char_ngram': 3, 'seeds': 100, 'bands': 10},  # 10 bands
-        {'char_ngram': 2, 'seeds': 100, 'bands': 5},  # Smaller shingles
-        {'char_ngram': 5, 'seeds': 100, 'bands': 5},  # Bigger shingles
-        {'char_ngram': 3, 'seeds': 100, 'bands': 20},  # 20 bands
-        {'char_ngram': 3, 'seeds': 100, 'bands': 5},  # Original experiment
+        {'char_ngram': 5, 'seeds': 100, 'bands': 10},
     ]
 
     for kwargs in experiments:
-        out_dirname = '_'.join([f"{k}_{v}" for k, v in kwargs.items()])
+        out_dirname = '_'.join([f"{k}_{v}" for k, v in kwargs.items()]) + '_str'
         out_dir = OUTPUT_DIR / 'lsh_duplicates' / out_dirname
         if out_dir.exists():
             continue
