@@ -35,7 +35,7 @@ def corpus_iter(corpus_dir: Path, name: str):
         docs = load(file)
 
         # Load filenames or ids
-        filenames_file = docs.with_name(f'{file.stem}_filenames.txt')
+        filenames_file = file.with_name(f'{file.stem}_filenames.txt')
         doc_ids = (
             filenames_file.read_text().split()
             if filenames_file.exists()
