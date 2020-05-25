@@ -1,25 +1,12 @@
-from pathlib import Path
-from typing import List
-
-from joblib import Memory, Parallel, delayed, dump
-from lsh import cache, minhash
-import numpy as np
 from itertools import chain
+from pathlib import Path
 
-from utils.constants import DATA_DIR, OUTPUT_DIR
-from utils.webtext import load_meta, split_docs
-
+import numpy as np
+from joblib import Parallel, delayed, dump, load
+from lsh import cache, minhash
 from tqdm.auto import tqdm
 
-# Create joblib memory
-mem = Memory(OUTPUT_DIR / 'cache' / 'webtext_overlap')
-
-cached_meta = mem.cache(load_meta)
-
-wt_meta = cached_meta(DATA_DIR / 'webtext')
-wt_files = wt_meta[0]
-owtc_meta = cached_meta(DATA_DIR / 'openwebtext_bpe')
-owtc_files = owtc_meta[0]
+from utils.constants import DATA_DIR, OUTPUT_DIR
 
 
 def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int = 4, n_jobs: int = 1):
@@ -40,22 +27,32 @@ def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int
     return hasher, lshcache
 
 
-def corpus_iter(files: List[Path], name: str):
+def corpus_iter(corpus_dir: Path, name: str):
+    files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
+
     i = 0
     for file in files:
+        docs = load(file)
+
+        # Load filenames or ids
+        filenames_file = docs.with_name(f'{file.stem}_filenames.txt')
+        doc_ids = (
+            filenames_file.read_text().split()
+            if filenames_file.exists()
+            else map(lambda idx: f'{file.stem}-{idx}', range(len(docs)))
+        )
+
         print("Loading file:", file)
-        shard = np.load(file)
-        docs = split_docs(shard)
-        for doc in docs:
-            # Yield name and doc as 4-byte
-            yield (i, name), doc.astype(np.int32).tobytes()
+        for doc_id, doc in zip(doc_ids, docs):
+            # Yield name and doc
+            yield (doc_id, name), doc
             i += 1
 
 
 def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path, save_bins: bool = False):
     corpus = chain(
-        corpus_iter(wt_files, name='wt'),
-        corpus_iter(owtc_files, name='owtc'),
+        corpus_iter(DATA_DIR / 'detokenized_webtext', name='wt'),
+        corpus_iter(DATA_DIR / 'openwebtext_shards', name='owtc'),
     )
     hasher, cache = train(document_feed=corpus,
                           char_ngram=char_ngram,
