@@ -93,6 +93,7 @@ def main():
             run_lsh(**kwargs, n_jobs=NUM_JOBS, out_dir=out_dir)
         except Exception as e:
             print("Exception during experiment ", out_dirname)
+            print(e)
 
 
 if __name__ == '__main__':
