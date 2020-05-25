@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 from utils.constants import DATA_DIR, OUTPUT_DIR
 
 TOTAL = 8_282_020 + 8_013_769
+RANDOM_STATE = 42
 
 
 class Fingerprinter:
@@ -23,7 +24,7 @@ class Fingerprinter:
 
 
 def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int = 4, n_jobs: int = 1):
-    hasher = minhash.MinHasher(seeds=seeds, char_ngram=char_ngram, hashbytes=hashbytes)
+    hasher = minhash.MinHasher(seeds=seeds, char_ngram=char_ngram, random_state=RANDOM_STATE, hashbytes=hashbytes)
     if seeds % bands != 0:
         raise ValueError('Seeds has to be a multiple of bands. {} % {} != 0'.format(seeds, bands))
 
