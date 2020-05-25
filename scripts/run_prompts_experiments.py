@@ -164,7 +164,8 @@ def _gpt2_helper(prompts: pd.Series,
                  num_samples: int,
                  batch_size: int,
                  generator: GPT2Generator,
-                 out_file: Path):
+                 out_file: Path,
+                 **generate_kwargs):
     # Repeat prompts
     prompts = prompts.repeat(num_samples)
 
@@ -182,7 +183,7 @@ def _gpt2_helper(prompts: pd.Series,
                        dynamic_ncols=True):
         # Generate
         try:
-            batch = generator.generate(prompt, max_len)
+            batch = generator.generate(prompt, max_len, **generate_kwargs)
         except RuntimeError as e:
             print("Error during generation with prompt:", prompt)
             print(e)
@@ -260,7 +261,8 @@ def gpt2(prompts: pd.Series,
          num_samples: int,
          batch_size: int,
          model_name_or_path: str,
-         out_file: Path) -> Iterable[str]:
+         out_file: Path,
+         **generate_kwargs) -> Iterable[str]:
     # Setup model
     generator = GPT2Generator(model_name_or_path)
 
@@ -269,7 +271,8 @@ def gpt2(prompts: pd.Series,
                                    num_samples=num_samples,
                                    batch_size=batch_size,
                                    generator=generator,
-                                   out_file=out_file):
+                                   out_file=out_file,
+                                   **generate_kwargs):
         yield generation
 
 
@@ -277,7 +280,8 @@ def gpt2(prompts: pd.Series,
 @click.argument('out_dir')
 @click.option('--dataset_file', required=False, type=str)
 @click.option('--eos_prompt/--no_eos_prompt', default=False)
-@click.option('--model_type', required=True, type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl', 'pplm']))
+@click.option('--model_type', required=True,
+              type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl', 'pplm', 'gpt2-greedy']))
 @click.option('--model_name_or_path', required=True)
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
@@ -348,6 +352,14 @@ def main(out_dir: str,
                                 batch_size=gen_batch_size,
                                 model_name_or_path=model_name_or_path,
                                 out_file=generations_file)
+    elif model_type == 'gpt2-greedy':
+        generations_iter = gpt2(prompts=prompts,
+                                max_len=gen_max_len,
+                                num_samples=gen_samples,
+                                batch_size=gen_batch_size,
+                                model_name_or_path=model_name_or_path,
+                                out_file=generations_file,
+                                sample=False)
     elif model_type == 'gpt2-affect':
         generations_iter = gpt2_affect(prompts=prompts,
                                        max_len=gen_max_len,
