@@ -88,7 +88,8 @@ def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path)
 def main():
     NUM_JOBS = 96
     experiments = [
-        {'char_ngram': 5, 'seeds': 100, 'bands': 10},
+        # {'char_ngram': 5, 'seeds': 100, 'bands': 10},
+        {'char_ngram': 5, 'seeds': 100, 'bands': 20},
     ]
 
     for kwargs in experiments:
