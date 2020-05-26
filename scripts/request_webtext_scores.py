@@ -9,15 +9,17 @@ from joblib import load
 from utils.constants import DATA_DIR, OUTPUT_DIR
 from utils.utils import load_jsonl
 
-WEBTEXT_SIZE = 8_282_020
 SHARD_SIZE = 414_101  # HACK: all webtext shards are this size
+WEBTEXT_SIZE = 8_282_020 - SHARD_SIZE  # Remove test shard
 
 
 def corpus_iter(corpus_dir: Path, offset_i: int) -> Iterable[str]:
     """
     Yield a request id (simply the document index as a string) and a document string
     """
-    files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
+    files = sorted([file for file in corpus_dir.iterdir()
+                    if file.suffix == '.joblib' and file.name != 'webtext_19.joblib'])  # Remove test shard
+    print(files)
 
     total_i = 0
     for file in files:
@@ -28,6 +30,7 @@ def corpus_iter(corpus_dir: Path, offset_i: int) -> Iterable[str]:
                 if not docs:  # Lazy load documents
                     tqdm.write(f'Loading {file}')
                     docs = load(file)
+                    assert len(docs) == SHARD_SIZE
                 yield str(total_i), docs[shard_i]
 
             total_i += 1
