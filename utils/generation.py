@@ -55,6 +55,7 @@ class GPT2Generator:
                  k: int = 0,
                  p: float = 0.9,
                  temperature: float = 1.0,
+                 bad_words_ids: List[List[int]] = None,
                  **model_kwargs) -> List[str]:
         if isinstance(prompt, str):
             prompt = [prompt]
@@ -80,6 +81,14 @@ class GPT2Generator:
                     next_token_logits = logits[range(batch_size), last_non_masked_idx, :]
                 else:
                     next_token_logits = logits[:, -1, :]
+
+                if bad_words_ids is not None:
+                    # calculate a list of banned tokens according to bad words
+                    banned_tokens = modeling_utils.calc_banned_bad_words_ids(input_ids, bad_words_ids)
+
+                    # TODO: use a vectorized operation
+                    for batch_idx in range(batch_size):
+                        next_token_logits[batch_idx, banned_tokens[batch_idx]] = -float("inf")
 
                 if sample:
                     # Temperature (higher temperature => more likely to sample low probability tokens)
