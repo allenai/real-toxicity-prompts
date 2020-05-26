@@ -4,6 +4,7 @@ import math
 from functools import partial
 from multiprocessing import Process, Queue
 from pathlib import Path
+import pickle
 from typing import Iterable, Optional
 
 import click
@@ -18,7 +19,7 @@ from transformers.pipelines import pipeline
 
 from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.perspective_api_request import perspective_api_request
-from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
+from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL, DATA_DIR
 from utils.generation import GPT2Generator
 from utils.pplm_generation import PPLMGeneration
 from utils.utils import batchify
@@ -281,7 +282,8 @@ def gpt2(prompts: pd.Series,
 @click.option('--dataset_file', required=False, type=str)
 @click.option('--eos_prompt/--no_eos_prompt', default=False)
 @click.option('--model_type', required=True,
-              type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl', 'pplm', 'gpt2-greedy']))
+              type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl',
+                                 'pplm', 'gpt2-greedy', 'gpt2-naughty-list']))
 @click.option('--model_name_or_path', required=True)
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
@@ -360,6 +362,17 @@ def main(out_dir: str,
                                 model_name_or_path=model_name_or_path,
                                 out_file=generations_file,
                                 sample=False)
+    elif model_type == 'gpt2-naughty-list':
+        # Load tokenized naughty words
+        with open(DATA_DIR / 'gpt2_naughty_token_ids.pkl', 'rb') as f:
+            naughty_list_ids = pickle.load(f)
+        generations_iter = gpt2(prompts=prompts,
+                                max_len=gen_max_len,
+                                num_samples=gen_samples,
+                                batch_size=gen_batch_size,
+                                model_name_or_path=model_name_or_path,
+                                out_file=generations_file,
+                                bad_words_ids=naughty_list_ids)
     elif model_type == 'gpt2-affect':
         generations_iter = gpt2_affect(prompts=prompts,
                                        max_len=gen_max_len,
