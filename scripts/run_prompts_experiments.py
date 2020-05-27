@@ -155,6 +155,20 @@ def _pipeline_helper(prompts: pd.Series,
             yield generation
 
 
+def openai_gpt(prompts: pd.Series,
+               max_len: int,
+               num_samples: int,
+               model_name_or_path: str,
+               out_file: Path,
+               **generate_kwargs):
+    yield from _pipeline_helper(prompts=prompts,
+                                model_name_or_path=model_name_or_path,
+                                max_len=max_len,
+                                num_samples=num_samples,
+                                out_file=out_file,
+                                **generate_kwargs)
+
+
 def ctrl(prompts: pd.Series,
          max_len: int,
          num_samples: int,
@@ -408,6 +422,12 @@ def main(out_dir: str,
                                      out_file=generations_file,
                                      # GPT2-CTRL
                                      prompt_ctrl_code='<|nontoxic|>')
+    elif model_type == 'openai-gpt':
+        generations_iter = openai_gpt(prompts=prompts,
+                                      max_len=gen_max_len,
+                                      num_samples=gen_samples,
+                                      model_name_or_path=model_name_or_path,
+                                      out_file=generations_file)
     elif model_type == 'ctrl':
         generations_iter = ctrl(prompts=prompts,
                                 max_len=gen_max_len,
