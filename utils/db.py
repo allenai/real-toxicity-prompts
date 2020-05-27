@@ -9,12 +9,12 @@ Base = declarative_base()
 Session = sessionmaker()
 
 
-class Response(Base):
-    __tablename__ = 'responses'
+class DocScore(Base):
+    __tablename__ = 'doc_scores'
     span_scores = relationship('SpanScore')
 
     # Metadata
-    filename = Column(String, primary_key=True)
+    id = Column(String, primary_key=True)
 
     # Attributes
     insult = Column(Float)
@@ -27,14 +27,14 @@ class Response(Base):
     threat = Column(Float)
 
     def __repr__(self):
-        return f"<Response<filename={self.filename}>"
+        return f"<DocScore<id={self.id}>"
 
 
 class SpanScore(Base):
     __tablename__ = 'span_scores'
 
     # Metadata
-    filename = Column(String, ForeignKey('responses.filename'), primary_key=True)
+    id = Column(String, ForeignKey('doc_scores.id'), primary_key=True)
     begin = Column(Integer, primary_key=True)
     end = Column(Integer, primary_key=True)
 
@@ -49,7 +49,7 @@ class SpanScore(Base):
     threat = Column(Float)
 
     def __repr__(self):
-        return f"<SpanScore<filename={self.filename}, begin={self.begin}, end={self.end}>"
+        return f"<SpanScore<id={self.id}, begin={self.begin}, end={self.end}>"
 
 
 def perspective_db_engine(**kwargs) -> Engine:
