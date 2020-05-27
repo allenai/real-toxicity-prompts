@@ -28,6 +28,10 @@ def batchify(data: Iterable[T], batch_size: int) -> Iterable[List[T]]:
         yield batch
 
 
+def first(iterable):
+    return next(iter(iterable), None)
+
+
 def save_gpt2_training_data(corpus: Sequence[str], out_file: Union[str, Path], eos_token='<|endoftext|>'):
     with open(out_file, 'a') as f:
         for i, text in enumerate(tqdm(corpus, desc='Saving training data')):

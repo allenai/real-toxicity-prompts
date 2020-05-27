@@ -12,7 +12,7 @@ from googleapiclient.discovery import Resource
 from tqdm.auto import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_LEN_LIMIT, PERSPECTIVE_API_KEY
-from utils.utils import batchify
+from utils.utils import batchify, first, load_jsonl
 
 Document = Union[Path, str, Tuple[str, str]]
 
@@ -143,12 +143,24 @@ def main(corpus, responses_file, api_key, requests_per_second):
         # Read corpus into memory if it's a single file
         print('Reading file into memory...')
         if corpus.suffix == '.jsonl':
-            with open(corpus) as f:
-                # Create a list of tuples (request_id, str)
-                corpus = [next(iter(line.items())) for line in map(json.loads, f)]
+            print("File type: jsonl")
+            corpus = list(load_jsonl(corpus))
+
+            # Create a list of tuples (request_id, str)
+            if isinstance(corpus[0], str):
+                print("Adding request ids to input file")
+                request_ids = map(str, range(len(corpus)))
+                corpus = list(zip(request_ids, corpus))
+            elif isinstance(corpus[0], dict):
+                print("Using request ids from file")
+                corpus = [first(line.items()) for line in corpus]
+            else:
+                raise RuntimeError('jsonl file not in expected format')
         else:
+            print("File type: txt")
             corpus = corpus.open().readlines()
     elif corpus.is_dir():
+        # FIXME: script no longer handles directories / lists of paths
         # Create list of files of it's a directory
         print('Loading list of files in corpus...')
         corpus = list(corpus.iterdir())
