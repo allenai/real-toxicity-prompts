@@ -19,7 +19,7 @@ from transformers.pipelines import pipeline
 
 from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.perspective_api_request import perspective_api_request
-from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL, DATA_DIR
+from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
 from utils.pplm_generation import PPLMGeneration
 from utils.utils import batchify
@@ -364,7 +364,8 @@ def main(out_dir: str,
                                 sample=False)
     elif model_type == 'gpt2-naughty-list':
         # Load tokenized naughty words
-        with open(DATA_DIR / 'gpt2_naughty_token_ids.pkl', 'rb') as f:
+        # FIXME: output dir must already exist with this file
+        with open(out_dir / 'gpt2_naughty_token_ids.pkl', 'rb') as f:
             naughty_list_ids = pickle.load(f)
         generations_iter = gpt2(prompts=prompts,
                                 max_len=gen_max_len,
