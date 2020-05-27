@@ -1,46 +1,21 @@
-import multiprocessing as mp
 import pickle
-from itertools import chain
+from functools import partial
+import multiprocessing as mp
 from pathlib import Path
 
-import numpy as np
-from joblib import dump, load
-from lsh import cache, minhash
+from datasketch import MinHash, LeanMinHash, MinHashLSH
+from joblib import load
+from nltk import ngrams
 from tqdm.auto import tqdm
 
 from utils.constants import DATA_DIR, OUTPUT_DIR
 
-TOTAL = 8_282_020 + 8_013_769
-RANDOM_STATE = 42
+NUM_PERM = 128
+SHINGLES = 5
+JACCARD = 0.9
 
 
-class Fingerprinter:
-    def __init__(self, hasher):
-        self.hasher = hasher
-
-    def fingerprint(self, item):
-        doc_id, doc = item
-        return doc_id, self.hasher.fingerprint(doc)
-
-
-def train(document_feed, char_ngram: int, seeds: int, bands: int, hashbytes: int = 4, n_jobs: int = 1):
-    hasher = minhash.MinHasher(seeds=seeds, char_ngram=char_ngram, random_state=RANDOM_STATE, hashbytes=hashbytes)
-    if seeds % bands != 0:
-        raise ValueError('Seeds has to be a multiple of bands. {} % {} != 0'.format(seeds, bands))
-
-    lshcache = cache.Cache(num_bands=bands, hasher=hasher)
-    fingerprinter = Fingerprinter(hasher)
-    with mp.Pool(processes=n_jobs) as pool:
-        for doc_id, fingerprint in tqdm(pool.imap(fingerprinter.fingerprint, document_feed, chunksize=10_000),
-                                        desc='Hashing',
-                                        dynamic_ncols=True,
-                                        total=TOTAL):
-            lshcache.add_fingerprint(fingerprint, doc_id=doc_id)
-
-    return hasher, lshcache
-
-
-def corpus_iter(corpus_dir: Path, name: str):
+def make_corpus_iter(corpus_dir: Path):
     files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
 
     i = 0
@@ -58,55 +33,50 @@ def corpus_iter(corpus_dir: Path, name: str):
         print("Loading file:", file)
         for doc_id, doc in zip(doc_ids, docs):
             # Yield name and doc
-            yield (doc_id, name), doc
+            yield doc_id, doc
             i += 1
 
 
-def run_lsh(char_ngram: int, seeds: int, bands: int, n_jobs: int, out_dir: Path):
-    corpus = chain(
-        corpus_iter(DATA_DIR / 'detokenized_webtext', name='wt'),
-        corpus_iter(DATA_DIR / 'openwebtext_shards', name='owtc'),
-    )
-    hasher, cache = train(document_feed=corpus,
-                          char_ngram=char_ngram,
-                          seeds=seeds,
-                          bands=bands,
-                          n_jobs=n_jobs)
+def make_minhash_mapping(item, shingles: int, num_perm: int):
+    doc_id, doc = item
 
-    # Save fingerprints and doc ids
-    doc_ids, fingerprints = zip(*cache.fingerprints.items())
-    with open(out_dir / 'doc_ids.pkl', 'wb') as f:
-        pickle.dump(doc_ids, f)
-    fingerprints_arr = np.stack(fingerprints)
-    np.save(out_dir / 'fingerprints.npy', fingerprints_arr)
+    # Create MinHash
+    shingles_set = set(ngrams(doc, shingles))
+    m = MinHash(num_perm=num_perm)
+    for s in shingles_set:
+        s = ''.join(s).encode('utf8')
+        m.update(s)
 
-    # Save duplicates
-    all_duplicates = cache.get_all_duplicates()
-    with open(out_dir / 'all_duplicates.pkl', 'wb') as f:
-        pickle.dump(all_duplicates, f)
+    # Convert to LeanMinHash
+    m = LeanMinHash(m)
+
+    return doc_id, m
+
+
+def parallel_create_minhashes(corpus_iter, shingles: int, num_perm: int, n_jobs: int, chunksize=1000):
+    make_minhash_mapping_ = partial(make_minhash_mapping, shingles=shingles, num_perm=num_perm)
+
+    with mp.Pool(n_jobs) as pool:
+        yield from pool.imap(make_minhash_mapping_, corpus_iter, chunksize=chunksize)
 
 
 def main():
-    NUM_JOBS = 96
-    experiments = [
-        # {'char_ngram': 5, 'seeds': 100, 'bands': 10},
-        {'char_ngram': 5, 'seeds': 100, 'bands': 20},
-    ]
+    wt_len = 8_282_020
+    wt_iter = make_corpus_iter(DATA_DIR / 'detokenized_webtext')
+    mh_iter = parallel_create_minhashes(wt_iter, shingles=SHINGLES, num_perm=NUM_PERM, n_jobs=96)
 
-    for kwargs in experiments:
-        out_dirname = '_'.join([f"{k}_{v}" for k, v in kwargs.items()]) + '_str'
-        out_dir = OUTPUT_DIR / 'lsh_duplicates' / out_dirname
-        if out_dir.exists():
-            continue
-        out_dir.mkdir(parents=True)
+    wt_minhashes = {}
+    wt_lsh = MinHashLSH(threshold=JACCARD, num_perm=NUM_PERM)
+    with wt_lsh.insertion_session() as session:
+        for key, minhash in tqdm(mh_iter, total=wt_len):
+            wt_minhashes[key] = minhash
+            session.insert(key, minhash, check_duplication=False)  # All keys are unique doc ids
 
-        print('*' * 100)
-        print('Starting', out_dirname)
-        try:
-            run_lsh(**kwargs, n_jobs=NUM_JOBS, out_dir=out_dir)
-        except Exception as e:
-            print("Exception during experiment ", out_dirname)
-            print(e)
+    with open(OUTPUT_DIR / 'webtext_minhashes.pkl', 'wb') as f:
+        pickle.dump(wt_minhashes, f)
+
+    with open(OUTPUT_DIR / 'webtext_lsh.pkl', 'wb') as f:
+        pickle.dump(wt_lsh, f)
 
 
 if __name__ == '__main__':
