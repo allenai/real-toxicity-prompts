@@ -5,6 +5,7 @@ import json
 import numpy as np
 import torch
 from tqdm.auto import tqdm
+import pandas as pd
 
 from utils.constants import TEXTS_DIR
 
@@ -60,3 +61,11 @@ def load_jsonl(file: Union[str, Path]) -> Iterable[Any]:
 def write_jsonl(content: Any, file: Union[str, Path], mode='a'):
     with open(file, mode) as f:
         print(json.dumps(content), f)
+
+
+def big_flat_jsonl_to_csv(jsonl_file: Path, csv_file: Path, chunksize=100_000, header=True):
+    chunks = pd.read_json(jsonl_file, lines=True, chunksize=chunksize)
+
+    for chunk in chunks:
+        chunk.to_csv(csv_file, header=header, mode='a', index=False)
+        header = False  # disable header after first rows are printed
