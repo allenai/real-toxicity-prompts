@@ -311,7 +311,7 @@ def gpt2(prompts: pd.Series,
 @click.option('--eos_prompt/--no_eos_prompt', default=False)
 @click.option('--model_type', required=True,
               type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl',
-                                 'pplm', 'gpt2-greedy', 'gpt2-naughty-list']))
+                                 'pplm', 'gpt2-greedy', 'gpt2-naughty-list', 'openai-gpt']))
 @click.option('--model_name_or_path', required=True)
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
