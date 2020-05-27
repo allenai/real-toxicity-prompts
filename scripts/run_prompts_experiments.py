@@ -111,18 +111,14 @@ def pplm(prompts: pd.Series,
                 yield generation
 
 
-def ctrl(prompts: pd.Series,
-         max_len: int,
-         num_samples: int,
-         ctrl_code: str,
-         model_name_or_path: str,
-         out_file: Path) -> Iterable[str]:
+def _pipeline_helper(prompts: pd.Series,
+                     model_name_or_path: str,
+                     max_len: int,
+                     num_samples: int,
+                     out_file: Path,
+                     **generate_kwargs):
     # Setup model
     generator = pipeline('text-generation', model=model_name_or_path, device=0)
-
-    # Prepend CTRL code to prompts
-    prompts = ctrl_code + " " + prompts
-    print(prompts)
 
     # Resume generation
     num_cached_generations = 0
@@ -139,12 +135,11 @@ def ctrl(prompts: pd.Series,
             batch = generator(prompt,
                               num_return_sequences=num_samples,
                               do_sample=True,
-                              temperature=1.0,
-                              repetition_penalty=1.2,
                               top_k=0,
                               top_p=0.9,
                               max_length=max_len,
-                              return_prompt=False)
+                              return_prompt=False,
+                              **generate_kwargs)
             batch = map(lambda g: g['generated_text'], batch)
         except RuntimeError as e:
             print("Error during generation with prompt:", prompt)
@@ -158,6 +153,28 @@ def ctrl(prompts: pd.Series,
             with out_file.open('a') as f:
                 print(json.dumps(generation), file=f)
             yield generation
+
+
+def ctrl(prompts: pd.Series,
+         max_len: int,
+         num_samples: int,
+         ctrl_code: str,
+         model_name_or_path: str,
+         out_file: Path,
+         **generate_kwargs) -> Iterable[str]:
+    # Setup model
+    generator = pipeline('text-generation', model=model_name_or_path, device=0)
+
+    # Prepend CTRL code to prompts
+    prompts = ctrl_code + " " + prompts
+    print(prompts)
+
+    yield from _pipeline_helper(prompts=prompts,
+                                model_name_or_path=model_name_or_path,
+                                max_len=max_len,
+                                num_samples=num_samples,
+                                out_file=out_file,
+                                **generate_kwargs)
 
 
 def _gpt2_helper(prompts: pd.Series,
@@ -398,7 +415,9 @@ def main(out_dir: str,
                                 model_name_or_path=model_name_or_path,
                                 out_file=generations_file,
                                 # CTRL
-                                ctrl_code='Links')
+                                ctrl_code='Links',
+                                temperature=1.0,
+                                repetition_penalty=1.2)
     elif model_type == 'pplm':
         generations_iter = pplm(prompts=prompts,
                                 max_len=gen_max_len,
