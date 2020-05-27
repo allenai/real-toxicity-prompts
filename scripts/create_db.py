@@ -36,18 +36,18 @@ def unpack_scores(response_json: dict) -> Tuple[dict, dict]:
     return summary_scores, span_scores
 
 
-def create_rows(response_json: dict, response_id: str) -> List[Union[DocScore, SpanScore]]:
+def create_rows(response_json: dict, id_: str) -> List[Union[DocScore, SpanScore]]:
     rows = []
     summary_scores, span_scores = unpack_scores(response_json)
 
-    response = DocScore(id=response_id, **summary_scores)
+    response = DocScore(id=id_, **summary_scores)
     rows.append(response)
 
     for span, attribute_span_scores in span_scores.items():
         # All attributes should have values for the same spans (line-by-line)
         assert ATTRIBUTES_SET == attribute_span_scores.keys()
         begin, end = span
-        span_score = SpanScore(id=response_id, begin=begin, end=end, **attribute_span_scores)
+        span_score = SpanScore(id=id_, begin=begin, end=end, **attribute_span_scores)
         rows.append(span_score)
 
     return rows
@@ -55,8 +55,9 @@ def create_rows(response_json: dict, response_id: str) -> List[Union[DocScore, S
 
 @click.command()
 @click.option('--responses_file', required=True)
+@click.option('--total', default=None, type=int)
 @click.argument('database_file')
-def main(responses_file: str, database_file: str):
+def main(responses_file: str, database_file: str, total: int):
     responses_file = Path(responses_file)
     if not responses_file.is_file():
         raise click.ClickException('Responses file does not exist')
@@ -79,11 +80,11 @@ def main(responses_file: str, database_file: str):
     tqdm.write(f'Reading responses into database...')
     try:
         # Add scores to our database
-        for line in tqdm(load_jsonl(responses_file)):
+        for line in tqdm(load_jsonl(responses_file), total=total):
             if not line['success']:
                 continue
 
-            rows = create_rows(line['response'], line['response_id'])
+            rows = create_rows(line['response'], line['request_id'])
 
             session.bulk_save_objects(rows)
             session.commit()
