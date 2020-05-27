@@ -222,13 +222,12 @@ def gpt2_ctrl(prompts: pd.Series,
     prompts = prompt_ctrl_code + prompts
     print(prompts)
 
-    for generation in _gpt2_helper(prompts=prompts,
-                                   max_len=max_len,
-                                   num_samples=num_samples,
-                                   batch_size=batch_size,
-                                   generator=generator,
-                                   out_file=out_file):
-        yield generation
+    yield from _gpt2_helper(prompts=prompts,
+                            max_len=max_len,
+                            num_samples=num_samples,
+                            batch_size=batch_size,
+                            generator=generator,
+                            out_file=out_file)
 
 
 def gpt2_affect(prompts: pd.Series,
@@ -248,13 +247,12 @@ def gpt2_affect(prompts: pd.Series,
     model.affect.beta = beta
     model.affect.ignore_special_tokens = True
 
-    for generation in _gpt2_helper(prompts=prompts,
-                                   max_len=max_len,
-                                   num_samples=num_samples,
-                                   batch_size=batch_size,
-                                   generator=generator,
-                                   out_file=out_file):
-        yield generation
+    yield from _gpt2_helper(prompts=prompts,
+                            max_len=max_len,
+                            num_samples=num_samples,
+                            batch_size=batch_size,
+                            generator=generator,
+                            out_file=out_file)
 
 
 def gpt2(prompts: pd.Series,
@@ -267,14 +265,13 @@ def gpt2(prompts: pd.Series,
     # Setup model
     generator = GPT2Generator(model_name_or_path)
 
-    for generation in _gpt2_helper(prompts=prompts,
-                                   max_len=max_len,
-                                   num_samples=num_samples,
-                                   batch_size=batch_size,
-                                   generator=generator,
-                                   out_file=out_file,
-                                   **generate_kwargs):
-        yield generation
+    yield from _gpt2_helper(prompts=prompts,
+                            max_len=max_len,
+                            num_samples=num_samples,
+                            batch_size=batch_size,
+                            generator=generator,
+                            out_file=out_file,
+                            **generate_kwargs)
 
 
 @click.command()
