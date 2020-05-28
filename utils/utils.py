@@ -59,11 +59,6 @@ def load_jsonl(file: Union[str, Path]) -> Iterable[Any]:
             yield json.loads(line)
 
 
-def write_jsonl(content: Any, file: Union[str, Path], mode='a'):
-    with open(file, mode) as f:
-        print(json.dumps(content), f)
-
-
 def big_flat_jsonl_to_csv(jsonl_file, csv_file, chunksize=100_000, header=True):
     chunks = pd.read_json(jsonl_file, lines=True, chunksize=chunksize)
 
