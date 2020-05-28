@@ -67,10 +67,11 @@ def split_webtext_shard(shard: np.array, block_size: int, eos: int) -> List[np.a
 
 def make_bucket_batches(examples: List[np.array], batch_size: int):
     batches = []
-    for bucket_len, bucket in groupby(examples, len):
+    for bucket_len, bucket in groupby(sorted(examples, key=len), key=len):
         bucket = list(bucket)
         for i in range(0, len(bucket), batch_size):
             batches.append(bucket[i: i + batch_size])
+    batches.reverse()  # Put largest batches first so we OOM faster
     return batches
 
 
