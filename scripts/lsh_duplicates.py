@@ -1,40 +1,17 @@
+import multiprocessing as mp
 import pickle
 from functools import partial
-import multiprocessing as mp
-from pathlib import Path
 
 from datasketch import MinHash, LeanMinHash, MinHashLSH
-from joblib import load
 from nltk import ngrams
 from tqdm.auto import tqdm
 
 from utils.constants import DATA_DIR, OUTPUT_DIR
+from utils.utils import make_corpus_iter
 
 NUM_PERM = 128
 SHINGLES = 5
 JACCARD = 0.9
-
-
-def make_corpus_iter(corpus_dir: Path):
-    files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
-
-    i = 0
-    for file in files:
-        docs = load(file)
-
-        # Load filenames or ids
-        filenames_file = file.with_name(f'{file.stem}_filenames.txt')
-        doc_ids = (
-            filenames_file.read_text().split()
-            if filenames_file.exists()
-            else map(lambda idx: f'{file.stem}-{idx}', range(len(docs)))
-        )
-
-        print("Loading file:", file)
-        for doc_id, doc in zip(doc_ids, docs):
-            # Yield name and doc
-            yield doc_id, doc
-            i += 1
 
 
 def make_minhash_mapping(item, shingles: int, num_perm: int):

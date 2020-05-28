@@ -1,11 +1,12 @@
+import json
 from pathlib import Path
 from typing import TypeVar, Iterable, List, Sequence, Union, Any
 
-import json
+import joblib
 import numpy as np
+import pandas as pd
 import torch
 from tqdm.auto import tqdm
-import pandas as pd
 
 from utils.constants import TEXTS_DIR
 
@@ -63,9 +64,40 @@ def write_jsonl(content: Any, file: Union[str, Path], mode='a'):
         print(json.dumps(content), f)
 
 
-def big_flat_jsonl_to_csv(jsonl_file: Path, csv_file: Path, chunksize=100_000, header=True):
+def big_flat_jsonl_to_csv(jsonl_file, csv_file, chunksize=100_000, header=True):
     chunks = pd.read_json(jsonl_file, lines=True, chunksize=chunksize)
 
     for chunk in chunks:
         chunk.to_csv(csv_file, header=header, mode='a', index=False)
         header = False  # disable header after first rows are printed
+
+
+def reorder_csv(csv_file_in, csv_file_out, columns, chunksize=100_000):
+    chunks = pd.read_csv(csv_file_in, chunksize=chunksize)
+
+    header = True
+    for chunk in chunks:
+        chunk.to_csv(csv_file_out, header=header, mode='a', index=False, columns=columns)
+        header = False  # disable header after first rows are printed
+
+
+def make_corpus_iter(corpus_dir: Path):
+    files = sorted([file for file in corpus_dir.iterdir() if file.suffix == '.joblib'])
+
+    i = 0
+    for file in files:
+        docs = joblib.load(file)
+
+        # Load filenames or ids
+        filenames_file = file.with_name(f'{file.stem}_filenames.txt')
+        doc_ids = (
+            filenames_file.read_text().split()
+            if filenames_file.exists()
+            else map(lambda idx: f'{file.stem}-{idx}', range(len(docs)))
+        )
+
+        print("Loading file:", file)
+        for doc_id, doc in zip(doc_ids, docs):
+            # Yield name and doc
+            yield doc_id, doc
+            i += 1
