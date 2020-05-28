@@ -117,18 +117,22 @@ def _pipeline_helper(prompts: pd.Series,
                      num_samples: int,
                      out_file: Path,
                      **generate_kwargs):
-    # Setup model
-    generator = pipeline('text-generation', model=model_name_or_path, device=0)
-
-    # Resume generation
+    # Load cached generations
     num_cached_generations = 0
     for generation in load_cache(out_file):
         yield generation
         num_cached_generations += 1
     assert num_cached_generations % num_samples == 0
 
-    # Generate with prompts
+    # Remove prompts that have already been generated with
     prompts = prompts[num_cached_generations // num_samples:]
+    if prompts.empty:
+        return
+
+    # Setup model
+    generator = pipeline('text-generation', model=model_name_or_path, device=0)
+
+    # Generate with prompts
     for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
         # Generate
         try:
@@ -176,9 +180,6 @@ def ctrl(prompts: pd.Series,
          model_name_or_path: str,
          out_file: Path,
          **generate_kwargs) -> Iterable[str]:
-    # Setup model
-    generator = pipeline('text-generation', model=model_name_or_path, device=0)
-
     # Prepend CTRL code to prompts
     prompts = ctrl_code + " " + prompts
     print(prompts)
