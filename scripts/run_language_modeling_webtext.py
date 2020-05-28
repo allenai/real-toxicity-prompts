@@ -22,11 +22,13 @@ import logging
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Optional, List
+from itertools import groupby
+from typing import Optional, List, Dict
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from torch.utils.data.dataloader import DataLoader
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
@@ -53,7 +55,7 @@ def split_webtext_shard(shard: np.array, block_size: int, eos: int) -> List[np.a
     idx = np.nonzero(shard == eos)[0] + 1  # Get start indices of each document split
     idx = idx[:-1]  # Last split is empty, so remove it
     docs = np.split(shard, idx)[1:]  # Split and discard EOS at start
-    print("Loaded", len(docs), "documents from WebText shard")
+    print("WebText: Loaded", len(docs), "documents from shard")
 
     examples = []
     for tokens in docs:
@@ -63,20 +65,48 @@ def split_webtext_shard(shard: np.array, block_size: int, eos: int) -> List[np.a
     return examples
 
 
+def make_bucket_batches(examples: List[np.array], batch_size: int):
+    batches = []
+    for bucket_len, bucket in groupby(examples, len):
+        bucket = list(bucket)
+        for i in range(0, len(bucket), batch_size):
+            batches.append(bucket[i: i + batch_size])
+    return batches
+
+
 class WebTextLineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1,
+                 max_batch_size=128):
         assert os.path.isfile(file_path)
         logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
 
         shard = np.load(file_path)
-        self.examples = split_webtext_shard(shard, block_size=block_size, eos=tokenizer.eos_token_id)
-        print(f"WebText: Loaded {len(self.examples)} blocks")
+        examples = split_webtext_shard(shard, block_size=block_size, eos=tokenizer.eos_token_id)
+        logger.info(f"WebText: Loaded {len(examples)} blocks")
+
+        # Create batches of equal length
+        self.batches = make_bucket_batches(examples, max_batch_size)
+        logger.info(f"WebText: Created {len(self.batches)} batches with max size {max_batch_size}")
 
     def __len__(self):
-        return len(self.examples)
+        return len(self.batches)
 
     def __getitem__(self, i) -> torch.Tensor:
-        return torch.tensor(self.examples[i], dtype=torch.long)
+        return torch.tensor(self.batches[i], dtype=torch.long)
+
+
+class BucketEvalTrainer(Trainer):
+    def evaluate(self,
+                 eval_dataset: Optional[Dataset] = None,
+                 prediction_loss_only: Optional[bool] = None) -> Dict[str, float]:
+        # Set batch size to None to disable automatic batching
+        eval_dataloader = DataLoader(eval_dataset,
+                                     batch_size=None,
+                                     shuffle=False,
+                                     collate_fn=self.data_collator.collate_batch)
+
+        output = self._prediction_loop(eval_dataloader, description="Evaluation")
+        return output.metrics
 
 
 @dataclass
