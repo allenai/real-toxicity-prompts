@@ -75,8 +75,8 @@ def make_bucket_batches(examples: List[np.array], batch_size: int):
 
 
 class WebTextLineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1,
-                 max_batch_size=128):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, max_batch_size: int,
+                 local_rank=-1):
         assert os.path.isfile(file_path)
         logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
 
@@ -91,16 +91,19 @@ class WebTextLineByLineTextDataset(Dataset):
     def __len__(self):
         return len(self.batches)
 
-    def __getitem__(self, i) -> torch.Tensor:
-        return torch.tensor(self.batches[i], dtype=torch.long)
+    def __getitem__(self, i) -> List[torch.Tensor]:
+        return [torch.tensor(x, dtype=torch.long) for x in self.batches[i]]
 
 
 class BucketEvalTrainer(Trainer):
     def evaluate(self,
                  eval_dataset: Optional[Dataset] = None,
                  prediction_loss_only: Optional[bool] = None) -> Dict[str, float]:
+        if eval_dataset is None and self.eval_dataset is None:
+            raise ValueError("Trainer: evaluation requires an eval_dataset.")
+
         # Set batch size to None to disable automatic batching
-        eval_dataloader = DataLoader(eval_dataset,
+        eval_dataloader = DataLoader(eval_dataset if eval_dataset is not None else self.eval_dataset,
                                      batch_size=None,
                                      shuffle=False,
                                      collate_fn=self.data_collator.collate_batch)
@@ -178,11 +181,13 @@ class DataTrainingArguments:
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
+def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, batch_size: int, evaluate=False,
+                local_rank=-1):
     file_path = args.eval_data_file if evaluate else args.train_data_file
     if args.webtext:
         return WebTextLineByLineTextDataset(
-            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank
+            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, max_batch_size=batch_size,
+            local_rank=local_rank
         )
     elif args.line_by_line:
         return LineByLineTextDataset(
@@ -288,12 +293,14 @@ def main():
 
     # Get datasets
     train_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank)
+        get_dataset(data_args, tokenizer=tokenizer, batch_size=training_args.train_batch_size,
+                    local_rank=training_args.local_rank)
         if training_args.do_train
         else None
     )
     eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, evaluate=True)
+        get_dataset(data_args, tokenizer=tokenizer, batch_size=training_args.eval_batch_size,
+                    local_rank=training_args.local_rank, evaluate=True)
         if training_args.do_eval
         else None
     )
@@ -302,7 +309,7 @@ def main():
     )
 
     # Initialize our Trainer
-    trainer = Trainer(
+    trainer = BucketEvalTrainer(
         model=model,
         args=training_args,
         data_collator=data_collator,
