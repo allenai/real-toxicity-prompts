@@ -18,13 +18,13 @@ Fine-tuning the library models for language modeling on a text file (GPT, GPT-2,
 GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
 using a masked language modeling (MLM) loss.
 """
-import json
 import logging
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import (
@@ -49,22 +49,28 @@ MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
+def split_webtext_shard(shard: np.array, block_size: int, eos: int) -> List[np.array]:
+    idx = np.nonzero(shard == eos)[0] + 1  # Get start indices of each document split
+    idx = idx[:-1]  # Last split is empty, so remove it
+    docs = np.split(shard, idx)[1:]  # Split and discard EOS at start
+    print("Loaded", len(docs), "documents from WebText shard")
+
+    examples = []
+    for tokens in docs:
+        for i in range(0, len(tokens), block_size):
+            examples.append(tokens[i: i + block_size])
+
+    return examples
+
+
 class WebTextLineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1, add_eos=True):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1):
         assert os.path.isfile(file_path)
-        logger.info(f"WEBTEXT: Loading WebText test set features from {file_path}, block size {block_size}")
+        logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
 
-        with open(file_path, encoding="utf-8") as f:
-            lines = []
-            for line in map(json.loads, f):
-                text = line['text']
-                if add_eos and line['length'] < block_size:
-                    text += tokenizer.eos_token
-                lines.append(text)
-
-        batch_encoding = tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=block_size)
-        self.examples = batch_encoding["input_ids"]
-        print(f"WEBTEXT: Loaded {len(self.examples)} webtext lines")
+        shard = np.load(file_path)
+        self.examples = split_webtext_shard(shard, block_size=block_size, eos=tokenizer.eos_token_id)
+        print(f"WebText: Loaded {len(self.examples)} blocks")
 
     def __len__(self):
         return len(self.examples)
