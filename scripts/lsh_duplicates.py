@@ -43,7 +43,7 @@ def parallel_create_minhashes(corpus_iter, shingles: int, num_perm: int, n_jobs:
 @click.option('--shingles', default=5)
 @click.option('--jaccard', default=0.9)
 @click.option('--n_jobs', default=os.cpu_count())
-@click.argument('output_dir', str)
+@click.argument('output_dir', type=str)
 def main(corpus: str, lsh: bool, num_perm: int, shingles: int, jaccard: float, n_jobs: int, output_dir: str):
     print("Making output dir:", output_dir)
     output_dir = Path(output_dir)
