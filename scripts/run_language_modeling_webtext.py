@@ -18,17 +18,17 @@ Fine-tuning the library models for language modeling on a text file (GPT, GPT-2,
 GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
 using a masked language modeling (MLM) loss.
 """
+
+
 import logging
 import math
 import os
 from dataclasses import dataclass, field
-from itertools import groupby
-from typing import Optional, List, Dict
+from typing import Optional
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from torch.utils.data.dataloader import DataLoader
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
@@ -45,72 +45,29 @@ from transformers import (
     set_seed,
 )
 
+
 logger = logging.getLogger(__name__)
+
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
-def split_webtext_shard(shard: np.array, block_size: int, eos: int) -> List[np.array]:
-    idx = np.nonzero(shard == eos)[0] + 1  # Get start indices of each document split
-    idx = idx[:-1]  # Last split is empty, so remove it
-    docs = np.split(shard, idx)[1:]  # Split and discard EOS at start
-    print("WebText: Loaded", len(docs), "documents from shard")
-
-    examples = []
-    for tokens in docs:
-        for i in range(0, len(tokens), block_size):
-            examples.append(tokens[i: i + block_size])
-
-    return examples
-
-
-def make_bucket_batches(examples: List[np.array], batch_size: int):
-    batches = []
-    for bucket_len, bucket in groupby(sorted(examples, key=len), key=len):
-        bucket = list(bucket)
-        for i in range(0, len(bucket), batch_size):
-            batches.append(bucket[i: i + batch_size])
-    batches.reverse()  # Put largest batches first so we OOM faster
-    return batches
-
-
 class WebTextLineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, max_batch_size: int,
-                 local_rank=-1):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1):
         assert os.path.isfile(file_path)
         logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
 
         shard = np.load(file_path)
-        examples = split_webtext_shard(shard, block_size=block_size, eos=tokenizer.eos_token_id)
-        logger.info(f"WebText: Loaded {len(examples)} blocks")
-
-        # Create batches of equal length
-        self.batches = make_bucket_batches(examples, max_batch_size)
-        logger.info(f"WebText: Created {len(self.batches)} batches with max size {max_batch_size}")
+        block_idxs = np.arange(block_size, len(shard), block_size)
+        self.examples = np.split(shard, block_idxs)
+        logger.info(f"WebText: Loaded {len(self.examples)} blocks")
 
     def __len__(self):
-        return len(self.batches)
+        return len(self.examples)
 
-    def __getitem__(self, i) -> List[torch.Tensor]:
-        return [torch.tensor(x, dtype=torch.long) for x in self.batches[i]]
-
-
-class BucketEvalTrainer(Trainer):
-    def evaluate(self,
-                 eval_dataset: Optional[Dataset] = None,
-                 prediction_loss_only: Optional[bool] = None) -> Dict[str, float]:
-        if eval_dataset is None and self.eval_dataset is None:
-            raise ValueError("Trainer: evaluation requires an eval_dataset.")
-
-        # Set batch size to None to disable automatic batching
-        eval_dataloader = DataLoader(eval_dataset if eval_dataset is not None else self.eval_dataset,
-                                     batch_size=None,
-                                     shuffle=False,
-                                     collate_fn=self.data_collator.collate_batch)
-
-        output = self._prediction_loop(eval_dataloader, description="Evaluation")
-        return output.metrics
+    def __getitem__(self, i) -> torch.Tensor:
+        return torch.tensor(self.examples[i], dtype=torch.long)
 
 
 @dataclass
@@ -173,8 +130,8 @@ class DataTrainingArguments:
         default=-1,
         metadata={
             "help": "Optional input sequence length after tokenization."
-                    "The training dataset will be truncated in block of this size for training."
-                    "Default to the model max input length for single sentence inputs (take into account special tokens)."
+            "The training dataset will be truncated in block of this size for training."
+            "Default to the model max input length for single sentence inputs (take into account special tokens)."
         },
     )
     overwrite_cache: bool = field(
@@ -182,13 +139,11 @@ class DataTrainingArguments:
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, batch_size: int, evaluate=False,
-                local_rank=-1):
+def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
     file_path = args.eval_data_file if evaluate else args.train_data_file
     if args.webtext:
         return WebTextLineByLineTextDataset(
-            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, max_batch_size=batch_size,
-            local_rank=local_rank
+            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank
         )
     elif args.line_by_line:
         return LineByLineTextDataset(
@@ -215,10 +170,10 @@ def main():
         )
 
     if (
-            os.path.exists(training_args.output_dir)
-            and os.listdir(training_args.output_dir)
-            and training_args.do_train
-            and not training_args.overwrite_output_dir
+        os.path.exists(training_args.output_dir)
+        and os.listdir(training_args.output_dir)
+        and training_args.do_train
+        and not training_args.overwrite_output_dir
     ):
         raise ValueError(
             f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
@@ -294,14 +249,12 @@ def main():
 
     # Get datasets
     train_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, batch_size=training_args.train_batch_size,
-                    local_rank=training_args.local_rank)
+        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank)
         if training_args.do_train
         else None
     )
     eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, batch_size=training_args.eval_batch_size,
-                    local_rank=training_args.local_rank, evaluate=True)
+        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, evaluate=True)
         if training_args.do_eval
         else None
     )
@@ -310,7 +263,7 @@ def main():
     )
 
     # Initialize our Trainer
-    trainer = BucketEvalTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         data_collator=data_collator,
