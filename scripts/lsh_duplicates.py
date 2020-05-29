@@ -67,7 +67,7 @@ def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, ja
     else:
         raise RuntimeError
 
-    print("Starting", n_jobs, "threads for minhashing...")
+    print("Using", n_jobs, "processes for MinHashing")
     minhash_iter = parallel_create_minhashes(corpus_iter, shingles=shingles, num_perm=num_perm, n_jobs=n_jobs)
     minhashes = {}
 
@@ -96,7 +96,7 @@ def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, ja
         duplicates_file = output_dir / 'duplicates.jsonl'
         print("Writing duplicates to", duplicates_file)
         with open(duplicates_file, 'a') as f:
-            for key, minhash in tqdm(minhash_iter, total=corpus_len, desc='Querying'):
+            for key, minhash in tqdm(minhash_iter, total=corpus_len, desc='Querying MinHashLSH'):
                 minhashes[key] = minhash
                 duplicates = lsh.query(minhash)
                 if duplicates:
