@@ -66,12 +66,12 @@ def main(corpus: str, mode: str, lsh_file: str, minhash_file: str, num_perm: int
         print('Loading MinHashes from disk:', minhash_file)
         start = time.time()
         with open(minhash_file, 'rb') as f:
-            minhashes = pickle.load(f)
+            cached_minhashes = pickle.load(f)
         print("Done loading MinHashes, time elapsed (sec):", time.time() - start)
 
-        corpus_len = len(minhashes)
-        minhashes = None
-        minhash_iter = map(lambda k, v: (k, v, None), minhashes.items())
+        corpus_len = len(cached_minhashes)
+        minhash_iter = map(lambda k, v: (k, v, None), cached_minhashes.items())
+        minhashes = None  # Set to none to disable saving minhashes again
     else:
         if corpus == 'webtext':
             corpus_len = 8_282_020
