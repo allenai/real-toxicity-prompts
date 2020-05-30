@@ -25,9 +25,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
-import numpy as np
-import torch
-from torch.utils.data import Dataset
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
@@ -44,28 +41,12 @@ from transformers import (
     set_seed,
 )
 
+from scripts.evaluation.webtext_dataset import WebTextPretokenizedDataset
+
 logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
-
-class WebTextLineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1):
-        assert os.path.isfile(file_path)
-        logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
-
-        shard = np.load(file_path)
-        block_idxs = np.arange(block_size, len(shard) - block_size + 1, block_size)
-        self.examples = np.split(shard, block_idxs)
-        assert all(len(block) == block_size for block in self.examples)
-        logger.info(f"WebText: Loaded {len(self.examples)} blocks of size {block_size}")
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i) -> torch.Tensor:
-        return torch.tensor(self.examples[i], dtype=torch.long)
 
 
 @dataclass
@@ -140,7 +121,7 @@ class DataTrainingArguments:
 def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
     file_path = args.eval_data_file if evaluate else args.train_data_file
     if args.webtext:
-        return WebTextLineByLineTextDataset(
+        return WebTextPretokenizedDataset(
             tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank
         )
     elif args.line_by_line:

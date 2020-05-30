@@ -18,7 +18,7 @@ Fine-tuning the library models for language modeling on a text file (GPT, GPT-2,
 GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
 using a masked language modeling (MLM) loss.
 """
-import json
+
 import logging
 import math
 import os
@@ -27,12 +27,10 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
     AutoConfig,
-    AutoModelWithLMHead,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
@@ -50,30 +48,6 @@ logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
-
-class WebTextLineByLineTextDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1, add_eos=True):
-        assert os.path.isfile(file_path)
-        logger.info(f"WEBTEXT: Loading WebText test set features from {file_path}, block size {block_size}")
-
-        with open(file_path, encoding="utf-8") as f:
-            lines = []
-            for line in map(json.loads, f):
-                text = line['text']
-                if add_eos and line['length'] < block_size:
-                    text += tokenizer.eos_token
-                lines.append(text)
-
-        batch_encoding = tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=block_size)
-        self.examples = batch_encoding["input_ids"]
-        print(f"WEBTEXT: Loaded {len(self.examples)} webtext lines")
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i) -> torch.Tensor:
-        return torch.tensor(self.examples[i], dtype=torch.long)
 
 
 @dataclass
