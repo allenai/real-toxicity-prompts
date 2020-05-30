@@ -23,6 +23,7 @@ from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
 from utils.pplm_generation import PPLMGeneration
 from utils.utils import batchify
+from utils.xlm_generation import XLNetGenerator
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
@@ -75,6 +76,49 @@ def load_cache(file: Path):
         with file.open() as f:
             for line in tqdm(f, desc=f'Loading cache from {file}'):
                 yield json.loads(line)
+
+
+def xlm(prompts: pd.Series,
+        max_len: int,
+        num_samples: int,
+        out_file: Path,
+        **generate_kwargs):
+    # Load cached generations
+    num_cached_generations = 0
+    for generation in load_cache(out_file):
+        yield generation
+        num_cached_generations += 1
+    assert num_cached_generations % num_samples == 0
+
+    # Remove prompts that have already been generated with
+    prompts = prompts[num_cached_generations // num_samples:]
+    if prompts.empty:
+        return
+
+    # Setup model
+    generator = XLNetGenerator()
+    print("Created pipeline with model:", generator.model.__class__.__name__)
+
+    # Generate with prompts
+    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
+        # Generate
+        try:
+            batch = generator(prompt,
+                              num_return_sequences=num_samples,
+                              max_length=max_len,
+                              **generate_kwargs)
+        except RuntimeError as e:
+            print("Error during generation with prompt:", prompt)
+            print(e)
+            print("Emptying CUDA cache and retrying...")
+            torch.cuda.empty_cache()
+
+            batch = ["GENERATION_ERROR_CUDA"] * num_samples
+
+        for generation in batch:
+            with out_file.open('a') as f:
+                print(json.dumps(generation), file=f)
+            yield generation
 
 
 def pplm(prompts: pd.Series,
