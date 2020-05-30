@@ -131,6 +131,7 @@ def _pipeline_helper(prompts: pd.Series,
 
     # Setup model
     generator = pipeline('text-generation', model=model_name_or_path, device=0)
+    print("Created pipeline with model:", generator.model.__class__.__name__)
 
     # Generate with prompts
     for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
