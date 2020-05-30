@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 
 import click
-from datasketch import MinHash, LeanMinHash, MinHashLSH
+from datasketch import MinHash, LeanMinHash, MinHashLSH, MinHashLSHEnsemble
 from nltk import ngrams
 from tqdm.auto import tqdm as _tqdm
 
@@ -31,7 +31,7 @@ def make_minhash_mapping(item, shingles: int, num_perm: int):
     # Convert to LeanMinHash
     m = LeanMinHash(m)
 
-    return doc_id, m
+    return doc_id, m, len(shingles_set)
 
 
 def parallel_create_minhashes(corpus_iter, shingles: int, num_perm: int, n_jobs: int, chunksize=1000):
@@ -43,14 +43,14 @@ def parallel_create_minhashes(corpus_iter, shingles: int, num_perm: int, n_jobs:
 
 @click.command()
 @click.option('--corpus', type=click.Choice(['webtext', 'openwebtext']), required=True)
-@click.option('--mode', type=click.Choice(['lsh', 'query', 'minhash-only']), default='minhash-only')
+@click.option('--mode', type=click.Choice(['lsh', 'lsh-ensemble', 'query', 'minhash-only']), default='minhash-only')
 @click.option('--lsh_file', default=None, type=str)
 @click.option('--num_perm', default=128)
 @click.option('--shingles', default=5)
-@click.option('--jaccard', default=0.9)
+@click.option('--threshold', default=0.9)
 @click.option('--n_jobs', default=os.cpu_count())
 @click.argument('output_dir', type=str)
-def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, jaccard: float, n_jobs: int,
+def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, threshold: float, n_jobs: int,
          output_dir: str):
     assert mode == 'query' or not lsh_file
 
@@ -72,12 +72,17 @@ def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, ja
     minhashes = {}
 
     print("Starting...")
-    if mode == 'lsh':
-        lsh = MinHashLSH(threshold=jaccard, num_perm=num_perm)
-        with lsh.insertion_session() as session:
-            for key, minhash in tqdm(minhash_iter, total=corpus_len, desc='Making MinHashLSH'):
-                minhashes[key] = minhash
-                session.insert(key, minhash, check_duplication=False)  # All keys are unique doc ids
+    if mode == 'lsh' or mode == 'lsh-ensemble':
+        if mode == 'lsh':
+            lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
+            with lsh.insertion_session() as session:
+                for key, minhash, size in tqdm(minhash_iter, total=corpus_len, desc='Making MinHashLSH'):
+                    minhashes[key] = minhash
+                    session.insert(key, minhash, check_duplication=False)  # All keys are unique doc ids
+        else:
+            assert mode == 'lsh-ensemble'
+            lsh = MinHashLSHEnsemble(threshold=threshold, num_perm=num_perm, num_part=16)  # TODO: try 32
+            lsh.index(minhash_iter)
 
         # Save LSH
         print("Saving LSH...")
@@ -96,14 +101,14 @@ def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, ja
         duplicates_file = output_dir / 'duplicates.jsonl'
         print("Writing duplicates to", duplicates_file)
         with open(duplicates_file, 'a') as f:
-            for key, minhash in tqdm(minhash_iter, total=corpus_len, desc='Querying MinHashLSH'):
+            for key, minhash, size in tqdm(minhash_iter, total=corpus_len, desc='Querying MinHashLSH'):
                 minhashes[key] = minhash
                 duplicates = lsh.query(minhash)
                 if duplicates:
                     json.dump({key: duplicates}, f)
                     f.write('\n')
     elif mode == 'minhash-only':
-        for key, minhash in tqdm(minhash_iter, total=corpus_len, desc='MinHashing'):
+        for key, minhash, size in tqdm(minhash_iter, total=corpus_len, desc='MinHashing'):
             minhashes[key] = minhash
     else:
         raise RuntimeError
