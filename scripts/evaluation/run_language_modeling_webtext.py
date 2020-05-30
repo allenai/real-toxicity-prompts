@@ -19,7 +19,6 @@ GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while B
 using a masked language modeling (MLM) loss.
 """
 
-
 import logging
 import math
 import os
@@ -45,9 +44,7 @@ from transformers import (
     set_seed,
 )
 
-
 logger = logging.getLogger(__name__)
-
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -59,9 +56,10 @@ class WebTextLineByLineTextDataset(Dataset):
         logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
 
         shard = np.load(file_path)
-        block_idxs = np.arange(block_size, len(shard), block_size)
+        block_idxs = np.arange(block_size, len(shard) - block_size + 1, block_size)
         self.examples = np.split(shard, block_idxs)
-        logger.info(f"WebText: Loaded {len(self.examples)} blocks")
+        assert all(len(block) == block_size for block in self.examples)
+        logger.info(f"WebText: Loaded {len(self.examples)} blocks of size {block_size}")
 
     def __len__(self):
         return len(self.examples)
@@ -130,8 +128,8 @@ class DataTrainingArguments:
         default=-1,
         metadata={
             "help": "Optional input sequence length after tokenization."
-            "The training dataset will be truncated in block of this size for training."
-            "Default to the model max input length for single sentence inputs (take into account special tokens)."
+                    "The training dataset will be truncated in block of this size for training."
+                    "Default to the model max input length for single sentence inputs (take into account special tokens)."
         },
     )
     overwrite_cache: bool = field(
@@ -170,10 +168,10 @@ def main():
         )
 
     if (
-        os.path.exists(training_args.output_dir)
-        and os.listdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
+            os.path.exists(training_args.output_dir)
+            and os.listdir(training_args.output_dir)
+            and training_args.do_train
+            and not training_args.overwrite_output_dir
     ):
         raise ValueError(
             f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
