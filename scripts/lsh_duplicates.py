@@ -45,31 +45,46 @@ def parallel_create_minhashes(corpus_iter, shingles: int, num_perm: int, n_jobs:
 @click.option('--corpus', type=click.Choice(['webtext', 'openwebtext']), required=True)
 @click.option('--mode', type=click.Choice(['lsh', 'lsh-ensemble', 'query', 'minhash-only']), default='minhash-only')
 @click.option('--lsh_file', default=None, type=str)
+@click.option('--minhash_file', default=None, type=str)
 @click.option('--num_perm', default=128)
 @click.option('--shingles', default=5)
 @click.option('--threshold', default=0.9)
 @click.option('--n_jobs', default=os.cpu_count())
 @click.argument('output_dir', type=str)
-def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, threshold: float, n_jobs: int,
-         output_dir: str):
-    assert mode == 'query' or not lsh_file
+def main(corpus: str, mode: str, lsh_file: str, minhash_file: str, num_perm: int, shingles: int, threshold: float,
+         n_jobs: int, output_dir: str):
+    if mode != 'query':
+        assert not lsh_file
+    if mode == 'minhash-only':
+        assert not minhash_file
 
     print("Making output dir:", output_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir()
 
-    if corpus == 'webtext':
-        corpus_len = 8_282_020
-        corpus_iter = make_corpus_iter(DATA_DIR / 'webtext_detokenized')
-    elif corpus == 'openwebtext':
-        corpus_len = 8_013_769
-        corpus_iter = make_corpus_iter(DATA_DIR / 'openwebtext_shards')
-    else:
-        raise RuntimeError
+    if minhash_file:
+        print('Loading MinHashes from disk:', minhash_file)
+        start = time.time()
+        with open(minhash_file, 'rb') as f:
+            minhashes = pickle.load(f)
+        print("Done loading MinHashes, time elapsed (sec):", time.time() - start)
 
-    print("Using", n_jobs, "processes for MinHashing")
-    minhash_iter = parallel_create_minhashes(corpus_iter, shingles=shingles, num_perm=num_perm, n_jobs=n_jobs)
-    minhashes = {}
+        corpus_len = len(minhashes)
+        minhashes = None
+        minhash_iter = map(lambda k, v: (k, v, None), minhashes.items())
+    else:
+        if corpus == 'webtext':
+            corpus_len = 8_282_020
+            corpus_iter = make_corpus_iter(DATA_DIR / 'webtext_detokenized')
+        elif corpus == 'openwebtext':
+            corpus_len = 8_013_769
+            corpus_iter = make_corpus_iter(DATA_DIR / 'openwebtext_shards')
+        else:
+            raise RuntimeError
+        print("Using", n_jobs, "processes for MinHashing")
+
+        minhashes = {}
+        minhash_iter = parallel_create_minhashes(corpus_iter, shingles=shingles, num_perm=num_perm, n_jobs=n_jobs)
 
     print("Starting...")
     if mode == 'lsh' or mode == 'lsh-ensemble':
@@ -77,7 +92,8 @@ def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, th
             lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
             with lsh.insertion_session() as session:
                 for key, minhash, size in tqdm(minhash_iter, total=corpus_len, desc='Making MinHashLSH'):
-                    minhashes[key] = minhash
+                    if minhashes:
+                        minhashes[key] = minhash
                     session.insert(key, minhash, check_duplication=False)  # All keys are unique doc ids
         else:
             assert mode == 'lsh-ensemble'
@@ -102,23 +118,26 @@ def main(corpus: str, mode: str, lsh_file: str, num_perm: int, shingles: int, th
         print("Writing duplicates to", duplicates_file)
         with open(duplicates_file, 'a') as f:
             for key, minhash, size in tqdm(minhash_iter, total=corpus_len, desc='Querying MinHashLSH'):
-                minhashes[key] = minhash
+                if minhashes:
+                    minhashes[key] = minhash
                 duplicates = lsh.query(minhash)
                 if duplicates:
                     json.dump({key: duplicates}, f)
                     f.write('\n')
     elif mode == 'minhash-only':
+        assert minhashes is not None
         for key, minhash, size in tqdm(minhash_iter, total=corpus_len, desc='MinHashing'):
             minhashes[key] = minhash
     else:
         raise RuntimeError
 
     # Save MinHashes
-    print("Saving MinHashes...")
-    start = time.time()
-    with open(output_dir / 'minhashes.pkl', 'wb') as f:
-        pickle.dump(minhashes, f)
-    print("Done saving MinHashes, time elapsed (sec):", time.time() - start)
+    if not minhash_file:
+        print("Saving MinHashes...")
+        start = time.time()
+        with open(output_dir / 'minhashes.pkl', 'wb') as f:
+            pickle.dump(minhashes, f)
+        print("Done saving MinHashes, time elapsed (sec):", time.time() - start)
 
 
 if __name__ == '__main__':
