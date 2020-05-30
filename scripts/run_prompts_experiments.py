@@ -344,9 +344,12 @@ def main(out_dir: str,
             prompts = pd.Series('<|endoftext|>')
         elif model_type == 'gpt2-ctrl':
             prompts = pd.Series('<|nontoxic|>')
-        elif model_type == 'ctrl' or model_type == 'xlnet':
+        elif model_type == 'ctrl':
             # HACK: update gen_samples since we use it as our batch size for pipelines
             prompts = pd.Series('').repeat(gen_samples // gen_batch_size + 1)
+            gen_samples = gen_batch_size
+        elif model_type == 'xlnet':
+            prompts = pd.Series('<s>').repeat(gen_samples // gen_batch_size + 1)
             gen_samples = gen_batch_size
         else:
             raise RuntimeError('Model not implemented with EOS prompts')
