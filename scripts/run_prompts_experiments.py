@@ -97,15 +97,15 @@ def xlm(prompts: pd.Series,
 
     # Setup model
     generator = XLNetGenerator()
-    print("Created pipeline with model:", generator.model.__class__.__name__)
+    print("Loaded XLNetGenerator")
 
     # Generate with prompts
     for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
         # Generate
         try:
             batch = generator(prompt,
+                              max_len=max_len,
                               num_return_sequences=num_samples,
-                              max_length=max_len,
                               **generate_kwargs)
         except RuntimeError as e:
             print("Error during generation with prompt:", prompt)
@@ -491,11 +491,10 @@ def main(out_dir: str,
                                 repetition_penalty=1.2)
     elif model_type == 'xlnet':
         assert model_name_or_path == 'xlnet-base-cased'
-        generations_iter = _pipeline_helper(prompts=prompts,
-                                            model_name_or_path=model_name_or_path,
-                                            max_len=gen_max_len,
-                                            num_samples=gen_samples,
-                                            out_file=generations_file)
+        generations_iter = xlm(prompts=prompts,
+                               max_len=gen_max_len,
+                               num_samples=gen_samples,
+                               out_file=generations_file)
     elif model_type == 'pplm':
         generations_iter = pplm(prompts=prompts,
                                 max_len=gen_max_len,
