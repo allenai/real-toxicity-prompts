@@ -312,7 +312,8 @@ def gpt2(prompts: pd.Series,
 @click.option('--eos_prompt/--no_eos_prompt', default=False)
 @click.option('--model_type', required=True,
               type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl',
-                                 'pplm', 'gpt2-greedy', 'gpt2-naughty-list', 'openai-gpt']))
+                                 'pplm', 'gpt2-greedy', 'gpt2-naughty-list',
+                                 'openai-gpt', 'xlnet']))
 @click.option('--model_name_or_path', required=True)
 @click.option('--perspective_rps', default=25)
 @click.option('--gen_samples', default=25)
@@ -343,8 +344,8 @@ def main(out_dir: str,
             prompts = pd.Series('<|endoftext|>')
         elif model_type == 'gpt2-ctrl':
             prompts = pd.Series('<|nontoxic|>')
-        elif model_type == 'ctrl':
-            # HACK: update gen_samples since we use it as our batch size for CTRL
+        elif model_type == 'ctrl' or model_type == 'xlnet':
+            # HACK: update gen_samples since we use it as our batch size for pipelines
             prompts = pd.Series('').repeat(gen_samples // gen_batch_size + 1)
             gen_samples = gen_batch_size
         else:
@@ -430,6 +431,7 @@ def main(out_dir: str,
                                       model_name_or_path=model_name_or_path,
                                       out_file=generations_file)
     elif model_type == 'ctrl':
+        assert model_name_or_path == 'ctrl'
         generations_iter = ctrl(prompts=prompts,
                                 max_len=gen_max_len,
                                 num_samples=gen_samples,
@@ -439,6 +441,13 @@ def main(out_dir: str,
                                 ctrl_code='Links',
                                 temperature=1.0,
                                 repetition_penalty=1.2)
+    elif model_type == 'xlnet':
+        assert model_name_or_path == 'xlnet-base-cased'
+        generations_iter = _pipeline_helper(prompts=prompts,
+                                            model_name_or_path=model_name_or_path,
+                                            max_len=gen_max_len,
+                                            num_samples=gen_samples,
+                                            out_file=generations_file)
     elif model_type == 'pplm':
         generations_iter = pplm(prompts=prompts,
                                 max_len=gen_max_len,
