@@ -185,6 +185,7 @@ def _pipeline_helper(prompts: pd.Series,
         try:
             batch = generator(prompt,
                               num_return_sequences=num_samples,
+                              clean_up_tokenization_spaces=True,
                               do_sample=True,
                               top_k=0,
                               top_p=0.9,
@@ -397,6 +398,9 @@ def main(out_dir: str,
             gen_samples = gen_batch_size
         elif model_type == 'xlnet':
             prompts = pd.Series('<s>').repeat(gen_samples // gen_batch_size + 1)
+            gen_samples = gen_batch_size
+        elif model_type == 'openai-gpt':
+            prompts = pd.Series('. ').repeat(gen_samples // gen_batch_size + 1)
             gen_samples = gen_batch_size
         else:
             raise RuntimeError('Model not implemented with EOS prompts')
