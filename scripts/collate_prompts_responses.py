@@ -37,9 +37,13 @@ def collate_eos_generations(in_dir: str, out_file: str, total: Optional[int]):
 @click.option('--dataset_file', required=True)
 @click.option('--generations_file', required=True)
 @click.option('--perspective_file', required=True)
+@click.option('--limit', type=int, default=None)
 @click.option('--out_file', required=True)
-def collate_generations(dataset_file: str, generations_file: str, perspective_file: str, out_file: str):
+def collate_generations(dataset_file: str, generations_file: str, perspective_file: str, limit: Optional[int],
+                        out_file: str):
     dataset = pd.read_csv(dataset_file)
+    if limit:
+        dataset = dataset.head(limit).copy()
 
     with open(generations_file) as f:
         generations = [json.loads(line) for line in tqdm(f)]
