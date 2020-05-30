@@ -1,9 +1,9 @@
 from pathlib import Path
-from typing import List, Iterable
+from typing import Iterable
 
 from tqdm import tqdm
 
-from scripts.perspective_api_request import perspective_api_request
+from utils.perspective_api import perspective_api_request
 from joblib import load
 
 from utils.constants import DATA_DIR, OUTPUT_DIR

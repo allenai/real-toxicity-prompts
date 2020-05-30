@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 from tqdm import tqdm
 
-from scripts.create_db import unpack_scores
+from scripts.data_preprocessing.create_db import unpack_scores
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.utils import load_jsonl
 

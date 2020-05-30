@@ -18,7 +18,7 @@ from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
 
 from models.affect_lm import AffectGPT2LMHeadModel
-from scripts.perspective_api_request import perspective_api_request
+from utils.perspective_api import perspective_api_request
 from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
 from utils.pplm_generation import PPLMGeneration
