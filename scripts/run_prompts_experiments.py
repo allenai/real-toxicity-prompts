@@ -81,17 +81,19 @@ def load_cache(file: Path):
 def xlm(prompts: pd.Series,
         max_len: int,
         num_samples: int,
+        batch_size: int,
         out_file: Path,
         **generate_kwargs):
-    # Load cached generations
+    # Repeat prompts
+    prompts = prompts.repeat(num_samples)
+
+    # Resume generation
     num_cached_generations = 0
     for generation in load_cache(out_file):
         yield generation
         num_cached_generations += 1
-    assert num_cached_generations % num_samples == 0
+    prompts = prompts[num_cached_generations:]
 
-    # Remove prompts that have already been generated with
-    prompts = prompts[num_cached_generations // num_samples:]
     if prompts.empty:
         return
 
@@ -99,21 +101,21 @@ def xlm(prompts: pd.Series,
     generator = XLNetGenerator()
     print("Loaded XLNetGenerator")
 
-    # Generate with prompts
-    for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
+    # Generate
+    for prompt in tqdm(batchify(prompts, batch_size),
+                       total=math.ceil(len(prompts) / batch_size),
+                       desc=f'Batch generation (bs={batch_size})',
+                       dynamic_ncols=True):
         # Generate
         try:
-            batch = generator(prompt,
-                              max_len=max_len,
-                              num_return_sequences=num_samples,
-                              **generate_kwargs)
+            batch = generator(prompt, max_len=max_len, **generate_kwargs)
         except RuntimeError as e:
             print("Error during generation with prompt:", prompt)
             print(e)
             print("Emptying CUDA cache and retrying...")
             torch.cuda.empty_cache()
 
-            batch = ["GENERATION_ERROR_CUDA"] * num_samples
+            batch = ["GENERATION_ERROR_CUDA"] * len(prompt)
 
         for generation in batch:
             with out_file.open('a') as f:
@@ -493,6 +495,7 @@ def main(out_dir: str,
         assert model_name_or_path == 'xlnet-base-cased'
         generations_iter = xlm(prompts=prompts,
                                max_len=gen_max_len,
+                               batch_size=gen_batch_size,
                                num_samples=gen_samples,
                                out_file=generations_file)
     elif model_type == 'pplm':
