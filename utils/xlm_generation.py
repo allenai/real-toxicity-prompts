@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union, Optional
+from typing import Union, Optional, Sequence
 
 import torch
 import numpy as np
@@ -68,7 +68,7 @@ class XLNetGenerator:
         return self.generate(*args, **kwargs)
 
     def generate(self,
-                 prompt: str,
+                 prompts: Union[Sequence[str], str],
                  max_len: int = 20,
                  temperature: float = 1.0,
                  k: int = 0,
@@ -78,17 +78,26 @@ class XLNetGenerator:
                  repetition_penalty: float = 1.0,
                  padding_text: Optional[str] = None,
                  clean_up_tokenization_spaces: bool = True):
-        # Create prompt and find size of it
+        if isinstance(prompts, str):
+            prompts = [prompts]
+
+        # Prepend rasputin-themed padding text to prompts
         if padding_text is None:
             padding_text = PADDING_TEXT
-        encoded_prompt = self.tokenizer.encode(padding_text + prompt, add_special_tokens=False, return_tensors="pt")
-        encoded_prompt = encoded_prompt.to(self.device)
-        prompt_len = len(encoded_prompt[0])
+        prompts = [padding_text + prompt for prompt in prompts]
+
+        # Tokenize prompts and pad them
+        encodings_dict = self.tokenizer.batch_encode_plus(
+            prompts, add_special_tokens=False, pad_to_max_length=True, return_tensors='pt'
+        ).to(self.device)
+
+        input_ids = encodings_dict['input_ids']
+        batch_size, prompt_len = input_ids.shape
 
         # Generate up to max_len tokens
         max_len = adjust_length_to_model(max_len, max_sequence_length=self.model.config.max_position_embeddings)
         output_sequences = self.model.generate(
-            input_ids=encoded_prompt,
+            input_ids=input_ids,
             max_length=max_len + prompt_len,
             temperature=temperature,
             top_k=k,
