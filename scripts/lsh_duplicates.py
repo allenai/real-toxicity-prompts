@@ -98,7 +98,7 @@ def main(corpus: str, mode: str, lsh_file: str, minhash_file: str, num_perm: int
         else:
             assert mode == 'lsh-ensemble'
             lsh = MinHashLSHEnsemble(threshold=threshold, num_perm=num_perm, num_part=16)  # TODO: try 32
-            lsh.index(minhash_iter)
+            lsh.index(tqdm(minhash_iter, total=corpus_len, desc='Making MinHashLSHEnsemble'))
 
         # Save LSH
         print("Saving LSH...")
