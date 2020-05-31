@@ -6,8 +6,8 @@ import spacy
 from spacy.tokens.doc import Doc
 from sqlalchemy.sql.functions import random
 
-from utils.constants import TEXTS_DIR, PERSPECTIVE_DB
-from utils.db import SpanScore, perspective_db_session
+from utils.constants import TEXTS_DIR, OPENWEBTEXT_DB
+from utils.openwebtext_db import SpanScore, openwebtext_db_session
 import click
 
 # Span constants
@@ -55,10 +55,10 @@ def create_prompts_dataset(out_file: str, n: float):
     out_file = Path(out_file)
     if out_file.exists():
         raise FileExistsError("Output file already exists.")
-    if not PERSPECTIVE_DB.exists():
+    if not OPENWEBTEXT_DB.exists():
         raise FileNotFoundError("Perspective database was not found.")
 
-    session = perspective_db_session()
+    session = openwebtext_db_session()
     query = (
         session.query(SpanScore)
             .filter(SpanScore.toxicity < 0.25)

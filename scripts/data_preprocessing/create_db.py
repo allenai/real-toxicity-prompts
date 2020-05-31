@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
-from utils.db import DocScore, SpanScore
+from utils.webtext_db import DocScore, SpanScore
 from utils.utils import load_jsonl
 
 ATTRIBUTES_SET = set(PERSPECTIVE_API_ATTRIBUTES_LOWER)

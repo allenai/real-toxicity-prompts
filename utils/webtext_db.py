@@ -3,7 +3,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 
-from utils.constants import PERSPECTIVE_DB
+from utils.constants import WEBTEXT_DB
 
 Base = declarative_base()
 Session = sessionmaker()
@@ -64,12 +64,12 @@ class SpanScore(Base):
         return f"<SpanScore<id={self.id}, begin={self.begin}, end={self.end}>"
 
 
-def perspective_db_engine(**kwargs) -> Engine:
-    return create_engine(f'sqlite:///{PERSPECTIVE_DB}', **kwargs)
+def webtext_db_engine(**kwargs) -> Engine:
+    return create_engine(f'sqlite:///{WEBTEXT_DB}', **kwargs)
 
 
-def perspective_db_session(**kwargs) -> Session:
-    engine = perspective_db_engine(**kwargs)
+def webtext_db_session(**kwargs) -> Session:
+    engine = webtext_db_engine(**kwargs)
     session = Session(bind=engine)
     return session
 

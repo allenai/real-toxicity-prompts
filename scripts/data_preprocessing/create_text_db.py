@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
-from utils.db import Doc, DocScore, SpanScore
+from utils.webtext_db import Doc, DocScore, SpanScore
 from utils.utils import make_corpus_iter, batchify
 
 Session = sessionmaker()
