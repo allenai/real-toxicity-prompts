@@ -25,6 +25,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
+import torch.nn.functional as F
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
@@ -41,12 +43,21 @@ from transformers import (
     set_seed,
 )
 
+from models.affect_lm import AffectGPT2LMHeadModel
 from scripts.evaluation.webtext_dataset import WebTextPretokenizedDataset
 
 logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+# Controllable model settings
+AFFECT_LABEL_IDX = 0
+AFFECT_NUM_LABELS = 2
+
+TARGET_CTRL_CODE = '<|nontoxic|>'
+CTRL_CODES = ['<|nontoxic|>', '<|toxic|>']
+assert TARGET_CTRL_CODE in CTRL_CODES
 
 
 @dataclass
@@ -64,6 +75,10 @@ class ModelArguments:
     model_type: Optional[str] = field(
         default=None,
         metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
+    )
+    controllable_model: Optional[str] = field(
+        default=None,
+        metadata={"help": "Use a controllable model for evaluation"},
     )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
@@ -201,13 +216,31 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
+    if model_args.controllable_model == 'ctrl-gpt2':
+        num_added_tokens = tokenizer.add_tokens(CTRL_CODES)
+        assert num_added_tokens == 2
+
     if model_args.model_name_or_path:
-        model = AutoModelWithLMHead.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-        )
+        if model_args.controllable_model == 'affect-gpt2':
+            logger.info("Using AffectLM for evaluation")
+            model = AffectGPT2LMHeadModel.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+            )
+
+            # Evaluate with non-toxic affect
+            affect_label = F.one_hot(torch.LongTensor([AFFECT_LABEL_IDX]),
+                                     num_classes=AFFECT_NUM_LABELS).float().to(training_args.device)
+            model.set_affect_labels(affect_label)
+        else:
+            model = AutoModelWithLMHead.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+            )
     else:
         logger.info("Training new model from scratch")
         model = AutoModelWithLMHead.from_config(config)

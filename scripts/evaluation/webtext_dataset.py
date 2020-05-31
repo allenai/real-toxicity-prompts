@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from typing import List
 
 import numpy as np
 import torch
@@ -10,14 +11,28 @@ from transformers import PreTrainedTokenizer
 logger = logging.getLogger(__name__)
 
 
+def blockify(tokens: np.array, block_size: int, inline_meta_tokens: List[int]):
+    block_size -= len(inline_meta_tokens)
+    block_idxs = np.arange(block_size, len(tokens) - block_size + 1, block_size)
+    examples_with_meta = np.split(tokens, block_idxs)
+    examples_with_meta = [inline_meta_tokens + ex for ex in examples_with_meta]
+    return examples_with_meta
+
+
 class WebTextPretokenizedDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, local_rank=-1):
+    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, inline_meta: str = None,
+                 local_rank=-1):
         assert os.path.isfile(file_path)
         logger.info(f"WebText: Loading WebText test set features from {file_path}, block size {block_size}")
 
+        inline_metadata_tokens = []
+        if inline_meta:
+            print("Adding inline metadata:", inline_meta)
+            inline_metadata_tokens = tokenizer.encode(inline_meta)
+            print("Tokenized metadata:", inline_metadata_tokens)
+
         shard = np.load(file_path)
-        block_idxs = np.arange(block_size, len(shard) - block_size + 1, block_size)
-        self.examples = np.split(shard, block_idxs)
+        self.examples = blockify(shard, block_size, inline_metadata_tokens)
         assert all(len(block) == block_size for block in self.examples)
         logger.info(f"WebText: Loaded {len(self.examples)} blocks of size {block_size}")
 
