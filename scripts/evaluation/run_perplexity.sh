@@ -7,15 +7,10 @@ NONTOXIC_WEBTEXT_TEST=$SUBSAMPLES_DIR/webtext_test_non_toxic_25_mil.npy
 
 BATCH_SIZE=4
 
-AFFECT_MODEL_PATH=$MODELS_DIR/affect_doc_v1
-CTRL_MODEL_PATH=$MODELS_DIR/gpt2_ctrl_v3_random_sample
-DAPT_NONTOXIC_PATH=$MODELS_DIR/finetune_lte2_v2
-DAPT_TOXIC_PATH=$MODELS_DIR/finetune_gte99_v2
-
 #############################
 # Affect
 #############################
-MODEL_PATH=$AFFECT_MODEL_PATH
+MODEL_PATH=$MODELS_DIR/affect_doc_v1
 CONTROLLABLE=affect-gpt2
 
 # 1. Affect on FULL DATA
@@ -47,7 +42,7 @@ python -m scripts.evaluation.run_language_modeling_webtext \
 ############################
 # CTRL-GPT2
 ############################
-MODEL_PATH=$CTRL_MODEL_PATH
+MODEL_PATH=$MODELS_DIR/gpt2_ctrl_v3_random_sample
 CONTROLLABLE=ctrl-gpt2
 
 # 3. CTRL-GPT2 on FULL DATA
@@ -79,7 +74,7 @@ python -m scripts.evaluation.run_language_modeling_webtext \
 #############################
 # DAPT-NONTOXIC
 #############################
-MODEL_PATH=DAPT_NONTOXIC_PATH
+MODEL_PATH=$MODELS_DIR/finetune_lte2_v2
 
 # 5. DAPT-NONTOXIC-GPT2 on FULL DATA
 EVAL_FILE=$WEBTEXT_TEST
