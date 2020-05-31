@@ -10,7 +10,7 @@ BATCH_SIZE=4
 #############################
 # Affect
 #############################
-MODEL_PATH=$MODELS_DIR/affect_doc_v1
+MODEL_PATH=$MODELS_DIR/affect_lm_doc_v1
 CONTROLLABLE=affect-gpt2
 
 # 1. Affect on FULL DATA
