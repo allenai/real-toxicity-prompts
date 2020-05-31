@@ -133,11 +133,12 @@ class DataTrainingArguments:
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
-    file_path = args.eval_data_file if evaluate else args.train_data_file
+def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, inline_meta: str = None, local_rank=-1):
+    file_path = args.eval_data_file
     if args.webtext:
         return WebTextPretokenizedDataset(
-            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank
+            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, inline_meta=inline_meta,
+            local_rank=local_rank
         )
     elif args.line_by_line:
         return LineByLineTextDataset(
@@ -210,9 +211,11 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
+    inline_meta = None
     if model_args.controllable_model == 'ctrl-gpt2':
         num_added_tokens = tokenizer.add_tokens(CTRL_CODES)
         assert num_added_tokens == 2
+        inline_meta = TARGET_CTRL_CODE
 
     if model_args.model_name_or_path:
         if model_args.controllable_model == 'affect-gpt2':
@@ -254,15 +257,8 @@ def main():
         data_args.block_size = min(data_args.block_size, tokenizer.max_len)
 
     # Get datasets
-    train_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank)
-        if training_args.do_train
-        else None
-    )
-    eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, evaluate=True)
-        if training_args.do_eval
-        else None
+    eval_dataset = get_dataset(
+        data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, inline_meta=inline_meta
     )
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
