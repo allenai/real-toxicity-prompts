@@ -12,11 +12,19 @@ logger = logging.getLogger(__name__)
 
 
 def blockify(tokens: np.array, block_size: int, inline_meta_tokens: List[int]):
-    block_size -= len(inline_meta_tokens)
-    block_idxs = np.arange(block_size, len(tokens) - block_size + 1, block_size)
-    examples_with_meta = np.split(tokens, block_idxs)
-    examples_with_meta = [inline_meta_tokens + ex for ex in examples_with_meta]
-    return examples_with_meta
+    if inline_meta_tokens:
+        block_size -= len(inline_meta_tokens)
+
+    block_idxs = np.arange(block_size, len(tokens), block_size)
+    examples = np.split(tokens, block_idxs)
+
+    if len(examples[-1]) != block_size:
+        examples = examples[:-1]
+
+    if inline_meta_tokens:
+        examples = [np.concatenate((inline_meta_tokens, ex)) for ex in examples]
+
+    return examples
 
 
 class WebTextPretokenizedDataset(Dataset):
@@ -35,6 +43,7 @@ class WebTextPretokenizedDataset(Dataset):
         self.examples = blockify(shard, block_size, inline_metadata_tokens)
         assert all(len(block) == block_size for block in self.examples)
         logger.info(f"WebText: Loaded {len(self.examples)} blocks of size {block_size}")
+        logger.info(f"WebText: first example is {self.examples[0]}")
 
     def __len__(self):
         return len(self.examples)

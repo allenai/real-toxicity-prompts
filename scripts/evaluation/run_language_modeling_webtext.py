@@ -213,9 +213,10 @@ def main():
 
     inline_meta = None
     if model_args.controllable_model == 'ctrl-gpt2':
-        num_added_tokens = tokenizer.add_tokens(CTRL_CODES)
-        assert num_added_tokens == 2
+        print("Loaded added tokens:", tokenizer.added_tokens_encoder)
         inline_meta = TARGET_CTRL_CODE
+        assert inline_meta in tokenizer.get_vocab().keys()
+        print("Using inline meta:", inline_meta)
 
     if model_args.model_name_or_path:
         if model_args.controllable_model == 'affect-gpt2':
