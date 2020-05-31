@@ -157,20 +157,14 @@ def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    if data_args.eval_data_file is None and training_args.do_eval:
+    if training_args.do_train:
         raise ValueError(
-            "Cannot do evaluation without an evaluation data file. Either supply a file to --eval_data_file "
-            "or remove the --do_eval argument."
+            "Training not supported with this script."
         )
 
-    if (
-            os.path.exists(training_args.output_dir)
-            and os.listdir(training_args.output_dir)
-            and training_args.do_train
-            and not training_args.overwrite_output_dir
-    ):
+    if data_args.eval_data_file is None:
         raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
+            "Cannot do evaluation without an evaluation data file."
         )
 
     # Setup logging
@@ -279,28 +273,13 @@ def main():
         model=model,
         args=training_args,
         data_collator=data_collator,
-        train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         prediction_loss_only=True,
     )
 
-    # Training
-    if training_args.do_train:
-        model_path = (
-            model_args.model_name_or_path
-            if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
-            else None
-        )
-        trainer.train(model_path=model_path)
-        trainer.save_model()
-        # For convenience, we also re-save the tokenizer to the same directory,
-        # so that you can share your model easily on huggingface.co/models =)
-        if trainer.is_world_master():
-            tokenizer.save_pretrained(training_args.output_dir)
-
     # Evaluation
     results = {}
-    if training_args.do_eval and training_args.local_rank in [-1, 0]:
+    if training_args.local_rank in [-1, 0]:
         logger.info("*** Evaluate ***")
 
         eval_output = trainer.evaluate()
