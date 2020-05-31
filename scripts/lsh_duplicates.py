@@ -4,6 +4,7 @@ import os
 import pickle
 import time
 from functools import partial
+from itertools import starmap
 from pathlib import Path
 
 import click
@@ -70,7 +71,7 @@ def main(corpus: str, mode: str, lsh_file: str, minhash_file: str, num_perm: int
         print("Done loading MinHashes, time elapsed (sec):", time.time() - start)
 
         corpus_len = len(cached_minhashes)
-        minhash_iter = map(lambda k, v: (k, v, None), cached_minhashes.items())
+        minhash_iter = starmap(lambda k, v: (k, v, None), cached_minhashes.items())
         minhashes = None  # Set to none to disable saving minhashes again
     else:
         if corpus == 'webtext':
