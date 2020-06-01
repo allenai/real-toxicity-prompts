@@ -35,19 +35,35 @@ WEBTEXT_TEST=$SUBSAMPLES_DIR/webtext_test_25_mil.npy
 NONTOXIC_WEBTEXT_TEST=$SUBSAMPLES_DIR/webtext_test_non_toxic_25_mil.npy
 
 #############################
-# Affect
+# Affect Beta 1
 #############################
 MODEL_PATH=$MODELS_DIR/affect_lm_doc_v1
-CONTROLLABLE=affect-gpt2
+CONTROLLABLE=affect-gpt2-beta-1
 
 # 1. Affect on FULL DATA
 EVAL_FILE=$WEBTEXT_TEST
-OUTPUT_DIR=output/eval/affect_gpt2_eval
+OUTPUT_DIR=output/eval/affect_gpt2_beta1_eval
 run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
 
 # 2. Affect on NONTOXIC
 EVAL_FILE=$NONTOXIC_WEBTEXT_TEST
-OUTPUT_DIR=output/eval/affect_gpt2_nontoxic_eval
+OUTPUT_DIR=output/eval/affect_gpt2_beta1_nontoxic_eval
+run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
+
+#############################
+# Affect Beta 3
+#############################
+MODEL_PATH=$MODELS_DIR/affect_lm_doc_v1
+CONTROLLABLE=affect-gpt2-beta-3
+
+# 1. Affect on FULL DATA
+EVAL_FILE=$WEBTEXT_TEST
+OUTPUT_DIR=output/eval/affect_gpt2_beta3_eval
+run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
+
+# 2. Affect on NONTOXIC
+EVAL_FILE=$NONTOXIC_WEBTEXT_TEST
+OUTPUT_DIR=output/eval/affect_gpt2_beta3_nontoxic_eval
 run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
 
 ############################

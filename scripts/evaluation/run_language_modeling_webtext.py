@@ -22,6 +22,7 @@ using a masked language modeling (MLM) loss.
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -219,7 +220,8 @@ def main():
         print("Using inline meta:", inline_meta)
 
     if model_args.model_name_or_path:
-        if model_args.controllable_model == 'affect-gpt2':
+        controllable_model = model_args.controllable_model
+        if controllable_model and controllable_model.startswith('affect-gpt2'):
             logger.info("Using AffectLM for evaluation")
             model = AffectGPT2LMHeadModel.from_pretrained(
                 model_args.model_name_or_path,
@@ -229,6 +231,9 @@ def main():
             )
 
             # Evaluate with non-toxic affect
+            beta = int(re.search(r'beta-([0-9]+)', controllable_model).group(1))
+            logging.info(f"Setting AffectLM beta to {beta}")
+            model.affect.beta = beta
             affect_label = F.one_hot(torch.LongTensor([AFFECT_LABEL_IDX]),
                                      num_classes=AFFECT_NUM_LABELS).float().to(training_args.device)
             model.set_affect_labels(affect_label)
