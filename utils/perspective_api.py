@@ -16,6 +16,27 @@ from utils.utils import batchify
 Document = Union[Path, str, Tuple[str, str]]
 
 
+def unpack_scores(response_json: dict) -> Tuple[dict, dict]:
+    attribute_scores = response_json['attributeScores'].items()
+
+    summary_scores = {}
+    span_scores = {}
+    for attribute, scores in attribute_scores:
+        attribute = attribute.lower()
+
+        # Save summary score
+        assert scores['summaryScore']['type'] == 'PROBABILITY'
+        summary_scores[attribute] = scores['summaryScore']['value']
+
+        # Save span scores
+        for span_score_dict in scores['spanScores']:
+            assert span_score_dict['score']['type'] == 'PROBABILITY'
+            span = (span_score_dict['begin'], span_score_dict['end'])
+            span_scores.setdefault(span, {})[attribute] = span_score_dict['score']['value']
+
+    return summary_scores, span_scores
+
+
 class PerspectiveAPI:
     def __init__(self, api_key: str = PERSPECTIVE_API_KEY):
         self.service = self._make_service(api_key)

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Union, Tuple
+from typing import List, Union
 
 import click
 from sqlalchemy import create_engine
@@ -7,33 +7,13 @@ from sqlalchemy.orm import sessionmaker
 from tqdm import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
+from utils.perspective_api import unpack_scores
 from utils.webtext_db import DocScore, SpanScore
 from utils.utils import load_jsonl
 
 ATTRIBUTES_SET = set(PERSPECTIVE_API_ATTRIBUTES_LOWER)
 
 Session = sessionmaker()
-
-
-def unpack_scores(response_json: dict) -> Tuple[dict, dict]:
-    attribute_scores = response_json['attributeScores'].items()
-
-    summary_scores = {}
-    span_scores = {}
-    for attribute, scores in attribute_scores:
-        attribute = attribute.lower()
-
-        # Save summary score
-        assert scores['summaryScore']['type'] == 'PROBABILITY'
-        summary_scores[attribute] = scores['summaryScore']['value']
-
-        # Save span scores
-        for span_score_dict in scores['spanScores']:
-            assert span_score_dict['score']['type'] == 'PROBABILITY'
-            span = (span_score_dict['begin'], span_score_dict['end'])
-            span_scores.setdefault(span, {})[attribute] = span_score_dict['score']['value']
-
-    return summary_scores, span_scores
 
 
 def create_rows(response_json: dict, id_: str) -> List[Union[DocScore, SpanScore]]:

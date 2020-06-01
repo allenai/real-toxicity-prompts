@@ -6,7 +6,7 @@ import click
 import pandas as pd
 from tqdm import tqdm
 
-from scripts.data_preprocessing.create_db import unpack_scores
+from utils.perspective_api import unpack_scores
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.utils import batchify, load_jsonl
 
