@@ -66,22 +66,6 @@ EVAL_FILE=$NONTOXIC_WEBTEXT_TEST
 OUTPUT_DIR=output/eval/affect_gpt2_beta3_nontoxic_eval
 run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
 
-############################
-# CTRL-GPT2
-############################
-MODEL_PATH=$MODELS_DIR/gpt2_ctrl_v3_random_sample
-CONTROLLABLE=ctrl-gpt2
-
-# 3. CTRL-GPT2 on FULL DATA
-EVAL_FILE=$WEBTEXT_TEST
-OUTPUT_DIR=output/eval/ctrl_gpt2_eval
-run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
-
-# 4. CTRL-GPT2 on NONTOXIC
-EVAL_FILE=$NONTOXIC_WEBTEXT_TEST
-OUTPUT_DIR=output/eval/ctrl_gpt2_nontoxic_eval
-run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
-
 #############################
 # DAPT-NONTOXIC
 #############################
@@ -99,7 +83,7 @@ OUTPUT_DIR=output/eval/gpt2_dapt_lte2_nontoxic_eval
 run_perplexity $MODEL_PATH $EVAL_FILE $OUTPUT_DIR $CONTROLLABLE
 
 #############################
-# DAPT-NONTOXIC
+# DAPT-TOXIC
 #############################
 MODEL_PATH=$MODELS_DIR/finetune_gte99_v2
 CONTROLLABLE=""
