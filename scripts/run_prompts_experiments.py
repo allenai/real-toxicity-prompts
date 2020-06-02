@@ -388,7 +388,7 @@ def main(out_dir: str,
 
     # Load dataset
     if eos_prompt:
-        if model_type == 'gpt2' or model_type == 'gpt2-affect' or model_type == 'pplm':
+        if model_type == 'gpt2' or model_type == 'gpt2-affect' or model_type == 'pplm' or model_type == 'gpt2-naughty-list':
             prompts = pd.Series('<|endoftext|>')
         elif model_type == 'gpt2-ctrl':
             prompts = pd.Series('<|nontoxic|>')
