@@ -11,9 +11,8 @@ from utils.utils import make_corpus_iter, batchify
 
 Session = sessionmaker()
 
-WT_SIZE = 8_282_020
+CORPUS_SIZE = 8_013_769
 NUM_SHARDS = 20
-SHARD_SIZE = WT_SIZE // NUM_SHARDS
 
 
 @click.command()
@@ -43,20 +42,20 @@ def main(corpus_dir: str, database_file: str, batch_size: int):
     session = Session()
 
     print('Reading texts into database...')
-    wt_iter = make_corpus_iter(corpus_dir)
-    pbar = tqdm(total=WT_SIZE)
+    corpus_iter = make_corpus_iter(corpus_dir)
+    pbar = tqdm(total=CORPUS_SIZE)
     try:
-        for batch in batchify(enumerate(wt_iter), batch_size=batch_size):
+        for batch in batchify(enumerate(corpus_iter), batch_size=batch_size):
             rows = []
             for i, (doc_id, text) in batch:
-                # Verify that index is correct
-                shard, idx = doc_id.split('-')
-                shard = int(re.search(r'[0-9]+', shard)[0])
-                idx = int(idx)
-                assert i == shard * SHARD_SIZE + idx
+                # # Verify that index is correct
+                # shard, idx = doc_id.split('-')
+                # shard = int(re.search(r'[0-9]+', shard)[0])
+                # idx = int(idx)
+                # assert i == shard * SHARD_SIZE + idx
 
                 # Create location string
-                location = f'{shard}-{idx}'
+                location = doc_id
                 doc = Doc(id=i, location=location, text=text)
                 rows.append(doc)
 
