@@ -370,7 +370,7 @@ def gpt2(prompts: pd.Series,
 @click.option('--shard', default=None, type=int)
 @click.option('--num_shards', default=0)
 @click.option('--resume/--no-resume', default=False)
-@slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
+# @slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
 def main(out_dir: str,
          eos_prompt: bool,
          dataset_file: Optional[str],
