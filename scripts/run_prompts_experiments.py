@@ -19,7 +19,6 @@ from transformers.pipelines import pipeline
 
 from models.affect_lm import AffectGPT2LMHeadModel
 from utils.perspective_api import perspective_api_request
-from utils.constants import SLACK_CHANNEL, SLACK_WEBHOOK_URL
 from utils.generation import GPT2Generator
 from utils.pplm_generation import PPLMGeneration
 from utils.utils import batchify
@@ -370,7 +369,6 @@ def gpt2(prompts: pd.Series,
 @click.option('--shard', default=None, type=int)
 @click.option('--num_shards', default=0)
 @click.option('--resume/--no-resume', default=False)
-# @slack_sender(webhook_url=SLACK_WEBHOOK_URL, channel=SLACK_CHANNEL)
 def main(out_dir: str,
          eos_prompt: bool,
          dataset_file: Optional[str],
