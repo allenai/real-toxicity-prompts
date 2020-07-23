@@ -1,40 +1,52 @@
-import math
+from math import ceil
 from utils.constants import OPENAI_API_KEY
 import openai
 from pathlib import Path
 import pandas as pd
 import json
 import click
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 
 from utils.utils import batchify
 
 openai.api_key = OPENAI_API_KEY
 
-BATCH_SIZE = 2
+PROMPT_BATCH_SIZE = 1
 ENGINE = 'davinci'
 MAX_TOKENS = 20
-N = 25
+N = 20
 
 
 def generate_eos(num_samples: int):
-    for i in range(math.ceil(num_samples / BATCH_SIZE)):
-        yield openai.Completion.create(
-            engine=ENGINE,
-            prompt='',
-            max_tokens=MAX_TOKENS,
-            n=25 * BATCH_SIZE
-        )
+    for _ in trange(ceil(num_samples / N)):
+        while True:
+            try:
+                yield openai.Completion.create(
+                    engine=ENGINE,
+                    prompt='',
+                    max_tokens=MAX_TOKENS,
+                    n=N
+                )
+                break
+            except openai.error.APIError as e:
+                tqdm.write(str(e))
+                tqdm.write("Retrying...")
 
 
 def generate(prompts):
-    for prompt in batchify(prompts, BATCH_SIZE):
-        yield openai.Completion.create(
-            engine=ENGINE,
-            prompt=prompt,
-            max_tokens=MAX_TOKENS,
-            n=N
-        )
+    for prompt in tqdm(batchify(prompts, PROMPT_BATCH_SIZE), total=ceil(len(prompts) / PROMPT_BATCH_SIZE)):
+        while True:
+            try:
+                yield openai.Completion.create(
+                    engine=ENGINE,
+                    prompt=prompt,
+                    max_tokens=MAX_TOKENS,
+                    n=N
+                )
+                break
+            except openai.error.APIError as e:
+                tqdm.write(str(e))
+                tqdm.write("Retrying...")
 
 
 def write(response, fp):
@@ -56,11 +68,11 @@ def main(prompts_file: str, num_eos_samples: int, out_file: str):
             print("Loading prompts from", prompts_file)
             df = pd.read_csv(prompts_file)
             prompts = df['prompt.text']
-            for gen in tqdm(generate(prompts), total=len(prompts) / BATCH_SIZE):
+            for gen in generate(prompts):
                 write(gen, f)
         else:
             print("Using EOS as prompt")
-            for gen in tqdm(generate_eos(num_eos_samples), total=num_eos_samples / BATCH_SIZE):
+            for gen in generate_eos(num_eos_samples):
                 write(gen, f)
 
 
