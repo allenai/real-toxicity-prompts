@@ -62,17 +62,24 @@ def main(prompts_file: str, num_eos_samples: int, out_file: str):
     assert prompts_file or num_eos_samples
 
     out_file = Path(out_file)
-    assert not out_file.exists()
-    with open(out_file, 'w') as f:
+
+    num_skip = 0
+    if out_file.exists():
+        # FIXME: relies on batch size 1
+        generations = pd.read_json(out_file, lines=True)
+        num_skip = len(generations)
+        print(num_skip, "previously completed generations")
+
+    with open(out_file, 'a') as f:
         if prompts_file:
             print("Loading prompts from", prompts_file)
             df = pd.read_csv(prompts_file)
             prompts = df['prompt.text']
-            for gen in generate(prompts):
+            for gen in generate(prompts[num_skip:]):
                 write(gen, f)
         else:
             print("Using EOS as prompt")
-            for gen in generate_eos(num_eos_samples):
+            for gen in generate_eos(num_eos_samples - num_skip):
                 write(gen, f)
 
 

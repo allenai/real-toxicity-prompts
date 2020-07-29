@@ -13,7 +13,6 @@ import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from knockknock import slack_sender
 from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
 
