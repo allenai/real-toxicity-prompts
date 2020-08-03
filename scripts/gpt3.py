@@ -44,7 +44,7 @@ def generate(prompts):
                     n=N
                 )
                 break
-            except openai.error.APIError as e:
+            except Exception as e:
                 tqdm.write(str(e))
                 tqdm.write("Retrying...")
 
