@@ -112,8 +112,7 @@ def perspective_api_request(corpus: Union[Iterable[Document], str],
                             responses_file: Optional[Path] = None,
                             api_key: str = PERSPECTIVE_API_KEY,
                             requests_per_second: int = 25,
-                            pbar: tqdm = None,
-                            yield_scores: bool = False):
+                            pbar: tqdm = None):
     if isinstance(corpus, str):
         corpus = [corpus]
 
@@ -141,13 +140,6 @@ def perspective_api_request(corpus: Union[Iterable[Document], str],
             if responses_file:
                 with responses_file.open('a') as f:
                     print(json.dumps(response_dict), file=f)
-
-            # Yield scores
-            if yield_scores:
-                if response:
-                    yield unpack_scores(response)
-                else:
-                    yield None
 
             if exception:
                 num_failures += 1
