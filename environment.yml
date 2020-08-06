@@ -1,4 +1,4 @@
-name: toxicity
+name: lm-toxicity
 channels:
   - defaults
 dependencies:
@@ -7,10 +7,11 @@ dependencies:
   - pip
   - pip:
       - click
+      - google-api-python-client
       - nltk
+      - openai
       - tensorboard
       - tensorboardX
-      - google-api-python-client
       - spacy
       - sqlalchemy
       - tqdm
