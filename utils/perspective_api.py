@@ -1,6 +1,8 @@
 import collections
 import json
 import time
+from multiprocessing.context import Process
+from multiprocessing.queues import Queue
 from pathlib import Path
 from typing import List, Union, Optional, Tuple, Dict, Any, Iterable
 
@@ -10,7 +12,7 @@ from googleapiclient.errors import HttpError
 from tqdm.auto import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_KEY
-from utils.utils import batchify
+from utils.utils import batchify, load_cache
 
 
 def unpack_scores(response_json: dict) -> Optional[Tuple[dict, dict]]:
@@ -124,6 +126,50 @@ class PerspectiveAPI:
             'spanAnnotations': True,
         }
         return service.comments().analyze(body=analyze_request)
+
+
+class PerspectiveWorker:
+    SENTINEL = 'STOP'
+
+    def __init__(self, out_file: Path, total: int, rate_limit: int):
+        if not rate_limit:
+            print("Disabling Perspective API (rps is 0)")
+            self.enabled = False
+            return
+        self.enabled = True
+
+        self.requests_handled = set()
+        for response in load_cache(out_file):
+            self.requests_handled.add(response['request_id'])
+        total -= len(self.requests_handled)
+
+        # Setup worker thread
+        self.task_queue = Queue()
+        self.process = Process(target=self.perspective_worker,
+                               args=(self.task_queue, out_file, total, rate_limit))
+        self.process.start()
+
+    def __call__(self, request_id: str, text: str):
+        if not self.enabled:
+            return
+
+        if request_id not in self.requests_handled:
+            self.task_queue.put((request_id, text))
+
+    def stop(self):
+        if not self.enabled:
+            return
+
+        print("Waiting for Perspective to finish...")
+        self.task_queue.put(self.SENTINEL)
+        self.process.join()
+
+    @classmethod
+    def perspective_worker(cls, queue: Queue, responses_file: Path, total: int, rate_limit: int):
+        queue_iter = iter(queue.get, cls.SENTINEL)
+        api = PerspectiveAPI(rate_limit=rate_limit)
+        pbar = tqdm(total=total, dynamic_ncols=True, position=1)
+        api.request_bulk(queue_iter, output_file=responses_file, pbar=pbar)
 
 
 def test_perspective_api():

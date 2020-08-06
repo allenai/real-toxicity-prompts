@@ -1,97 +1,54 @@
-import logging
 import pickle
-from multiprocessing import Process, Queue
 from pathlib import Path
 from typing import Optional
 
 import click
 import pandas as pd
 import torch
-from tqdm.auto import tqdm
 
 from generation.generation import gpt2, gpt2_affect, gpt2_ctrl, openai_gpt, ctrl, xlm, pplm
 from scripts.data_preprocessing.collate_prompts_experiment import collate
-from utils.perspective_api import PerspectiveAPI
-from utils.utils import load_cache, load_jsonl
+from utils.perspective_api import PerspectiveWorker
+from utils.utils import load_jsonl
 
-logging.disable(logging.CRITICAL)  # Disable logging from transformers
-
-
-class PerspectiveWorker:
-    SENTINEL = 'STOP'
-
-    def __init__(self, out_file: Path, total: int, rps: int):
-        if not rps:
-            print("Disabling perspective (rps is 0)")
-            self.enabled = False
-            return
-
-        self.enabled = True
-
-        self.requests_handled = set()
-        for response in load_cache(out_file):
-            self.requests_handled.add(response['request_id'])
-        total -= len(self.requests_handled)
-
-        # Setup worker thread
-        self.task_queue = Queue()
-        self.process = Process(target=self.perspective_worker, args=(self.task_queue, out_file, total, rps))
-        self.process.start()
-
-    def __call__(self, request_id: str, text: str):
-        if not self.enabled:
-            return
-
-        if request_id not in self.requests_handled:
-            self.task_queue.put((request_id, text))
-
-    def stop(self):
-        if not self.enabled:
-            return
-
-        print("Waiting for Perspective to finish...")
-        self.task_queue.put(self.SENTINEL)
-        self.process.join()
-
-    @classmethod
-    def perspective_worker(cls, queue: Queue, responses_file: Path, total: int, rps: int):
-        queue_iter = iter(queue.get, cls.SENTINEL)
-        api = PerspectiveAPI(rate_limit=rps)
-        pbar = tqdm(total=total, dynamic_ncols=True, position=1)
-        api.request_bulk(queue_iter, output_file=responses_file, pbar=pbar)
+ALLOWED_MODELS = ['gpt2', 'gpt2-affect', 'gpt2-ctrl', 'gpt2-greedy', 'gpt2-naughty-list',
+                  'pplm', 'ctrl', 'openai-gpt', 'xlnet']
 
 
 @click.command()
-@click.argument('out_dir')
-@click.option('--dataset_file', required=False, type=str)
-@click.option('--eos_prompt/--no_eos_prompt', default=False)
-@click.option('--model_type', required=True,
-              type=click.Choice(['gpt2', 'ctrl', 'gpt2-affect', 'gpt2-ctrl',
-                                 'pplm', 'gpt2-greedy', 'gpt2-naughty-list',
-                                 'openai-gpt', 'xlnet']))
-@click.option('--model_name_or_path', required=True)
-@click.option('--perspective_rps', default=25)
-@click.option('--gen_samples', default=25)
-@click.option('--gen_max_len', default=20)
-@click.option('--gen_batch_size', default=32)
+@click.argument('output-dir')
+@click.option('--dataset-file', required=False, type=str,
+              help='JSONL file containing prompts data. Each row must contain a prompt at `row["prompt"]["text"]`.')
+@click.option('--use-eos/--use-dataset', default=False, help='Whether to use EOS or a dataset file for generation.')
+@click.option('--model', required=True, help='Equivalent to `model_name_or_path` in transformers.')
+@click.option('--model-type', required=True,
+              type=click.Choice(ALLOWED_MODELS))
+@click.option('--perspective-rate-limit', default=25)
+@click.option('--n', default=25, help='Number of samples to generate for each prompt. When used with --eos')
+@click.option('--max-tokens', default=20, help='Number of tokens (usually BPE) to generate for each prompt.')
+@click.option('--batch-size', default=32)
 @click.option('--resume/--no-resume', default=False)
-def main(out_dir: str,
-         eos_prompt: bool,
+def main(output_dir: str,
          dataset_file: Optional[str],
+         use_eos: bool,
+         model: str,
          model_type: str,
-         model_name_or_path: str,
-         perspective_rate_limit: int,
          n: int,
          max_tokens: int,
          batch_size: int,
+         perspective_rate_limit: int,
          resume: bool):
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=resume)
-
-    # Load dataset
-    if eos_prompt:
+    # Load prompts
+    if dataset_file:
+        assert not use_eos
+        # Load prompts from dataset file
+        dataset = pd.read_json(dataset_file, lines=True)
+        prompts = pd.json_normalize(dataset['prompt'])['text']
+    elif use_eos:
+        assert not dataset_file
         dataset = None
-        if model_type == 'gpt2' or model_type == 'gpt2-affect' or model_type == 'pplm' or model_type == 'gpt2-naughty-list':
+        # Create EOS prompts
+        if model_type in ['gpt2', 'gpt2-affect', 'gpt2-naughty-list', 'pplm']:
             prompts = pd.Series('<|endoftext|>')
         elif model_type == 'gpt2-ctrl':
             prompts = pd.Series('<|nontoxic|>')
@@ -105,54 +62,54 @@ def main(out_dir: str,
         elif model_type == 'openai-gpt':
             prompts = pd.Series('. ').repeat(n // batch_size + 1)
             n = batch_size
+        elif model_type == 'gpt3':
+            prompts = pd.Series('').repeat(n // batch_size + 1)
         else:
             raise RuntimeError('Model not implemented with EOS prompts')
-    elif dataset_file:
-        dataset = pd.read_json(dataset_file, lines=True)
-        prompts = pd.json_normalize(dataset['prompt'])['text']
     else:
-        raise click.exceptions.MissingParameter('Missing dataset file or eos prompt option')
+        raise click.exceptions.MissingParameter('Missing --dataset-file or --use-eos option.')
+    print('Prompts:', '\n', prompts)
 
-    print("Using entire dataset")
-    generations_file = out_dir / 'generations.jsonl'
-    perspective_file = out_dir / 'perspective.jsonl'
-    output_file = out_dir / 'output.jsonl'
-
-    print("Prompts:")
-    print(prompts)
+    # Create output files
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=resume)
+    generations_file = output_dir / 'generations.jsonl'
+    perspective_file = output_dir / 'perspective.jsonl'
+    output_file = output_dir / f'{"eos" if use_eos else "prompted"}_gens_{model_type}.jsonl'
 
     # Create perspective worker thread
     perspective = PerspectiveWorker(out_file=perspective_file,
                                     total=len(prompts) * n,
-                                    rps=perspective_rate_limit)
+                                    rate_limit=perspective_rate_limit)
 
+    # Setup model for generation
     # TODO: move this logic into generation.py
-    # Generate and request perspective scores
     if model_type == 'gpt2':
         generations_iter = gpt2(prompts=prompts,
                                 max_len=max_tokens,
                                 num_samples=n,
                                 batch_size=batch_size,
-                                model_name_or_path=model_name_or_path,
+                                model_name_or_path=model,
                                 out_file=generations_file)
     elif model_type == 'gpt2-greedy':
+        print("Using n=1 for greedy generation (sampling does not apply)")
         generations_iter = gpt2(prompts=prompts,
                                 max_len=max_tokens,
-                                num_samples=n,
+                                num_samples=1,
                                 batch_size=batch_size,
-                                model_name_or_path=model_name_or_path,
+                                model_name_or_path=model,
                                 out_file=generations_file,
                                 sample=False)
     elif model_type == 'gpt2-naughty-list':
-        # Load tokenized naughty words
+        # Load pre-tokenized naughty words
         # FIXME: output dir must already exist with this file
-        with open(out_dir / 'gpt2_naughty_token_ids.pkl', 'rb') as f:
+        with open(output_dir / 'gpt2_naughty_token_ids.pkl', 'rb') as f:
             naughty_list_ids = pickle.load(f)
         generations_iter = gpt2(prompts=prompts,
                                 max_len=max_tokens,
                                 num_samples=n,
                                 batch_size=batch_size,
-                                model_name_or_path=model_name_or_path,
+                                model_name_or_path=model,
                                 out_file=generations_file,
                                 bad_words_ids=naughty_list_ids)
     elif model_type == 'gpt2-affect':
@@ -160,7 +117,7 @@ def main(out_dir: str,
                                        max_len=max_tokens,
                                        num_samples=n,
                                        batch_size=batch_size,
-                                       model_name_or_path=model_name_or_path,
+                                       model_name_or_path=model,
                                        out_file=generations_file,
                                        # Affect
                                        target_class=0,
@@ -171,7 +128,7 @@ def main(out_dir: str,
                                      max_len=max_tokens,
                                      num_samples=n,
                                      batch_size=batch_size,
-                                     model_name_or_path=model_name_or_path,
+                                     model_name_or_path=model,
                                      out_file=generations_file,
                                      # GPT2-CTRL
                                      prompt_ctrl_code='<|nontoxic|>')
@@ -179,21 +136,21 @@ def main(out_dir: str,
         generations_iter = openai_gpt(prompts=prompts,
                                       max_len=max_tokens,
                                       num_samples=n,
-                                      model_name_or_path=model_name_or_path,
+                                      model_name_or_path=model,
                                       out_file=generations_file)
     elif model_type == 'ctrl':
-        assert model_name_or_path == 'ctrl'
+        assert model == 'ctrl'
         generations_iter = ctrl(prompts=prompts,
                                 max_len=max_tokens,
                                 num_samples=n,
-                                model_name_or_path=model_name_or_path,
+                                model_name_or_path=model,
                                 out_file=generations_file,
                                 # CTRL
                                 ctrl_code='Wikipedia',
                                 temperature=1.0,
                                 repetition_penalty=1.2)
     elif model_type == 'xlnet':
-        assert model_name_or_path == 'xlnet-base-cased'
+        assert model == 'xlnet-base-cased'
         generations_iter = xlm(prompts=prompts,
                                max_len=max_tokens,
                                batch_size=batch_size,
@@ -209,19 +166,19 @@ def main(out_dir: str,
                                 model_name_or_path='toxicity',
                                 out_file=generations_file)
     else:
-        raise NotImplementedError(f'Model {model_name_or_path} not implemented')
+        raise NotImplementedError(f'Model {model} not implemented')
 
+    # Generate and collate perspective scores
     generations = []
     for i, gen in enumerate(generations_iter):
         perspective(f'generation-{i}', gen)
         generations.append(gen)
 
     torch.cuda.empty_cache()
-
     perspective.stop()
+    print('Finished generation and perspective scoring!')
 
-    print('Done')
-    print('Collating temporary files')
+    print('Collating output files')
     collate(dataset, generations, load_jsonl(perspective_file), output_file)
 
 
