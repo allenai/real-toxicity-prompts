@@ -1,10 +1,10 @@
 import json
 import logging
 import math
+import pickle
 from functools import partial
 from multiprocessing import Process, Queue
 from pathlib import Path
-import pickle
 from typing import Iterable, Optional
 
 import click
@@ -16,12 +16,12 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 from transformers.pipelines import pipeline
 
-from models.affect_lm import AffectGPT2LMHeadModel
-from utils.perspective_api import perspective_api_request
 from generation.gpt2_generation import GPT2Generation
 from generation.pplm_generation import PPLMGeneration
-from utils.utils import batchify
 from generation.xlm_generation import XLNetGenerator
+from models.affect_lm import AffectGPT2LMHeadModel
+from utils.perspective_api import PerspectiveAPI
+from utils.utils import batchify
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
@@ -65,8 +65,9 @@ class PerspectiveWorker:
     @classmethod
     def perspective_worker(cls, queue: Queue, responses_file: Path, total: int, rps: int):
         queue_iter = iter(queue.get, cls.SENTINEL)
+        api = PerspectiveAPI(rate_limit=rps)
         pbar = tqdm(total=total, dynamic_ncols=True, position=1)
-        perspective_api_request(queue_iter, responses_file=responses_file, pbar=pbar, requests_per_second=rps)
+        api.request_bulk(queue_iter, output_file=responses_file, pbar=pbar)
 
 
 def load_cache(file: Path):
