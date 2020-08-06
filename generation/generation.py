@@ -1,3 +1,5 @@
+# TODO: add `text` key to cached generations
+# TODO: consolidate code for loading cache
 import json
 import logging
 import math
