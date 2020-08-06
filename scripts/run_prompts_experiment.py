@@ -5,15 +5,14 @@ from pathlib import Path
 from typing import Optional
 
 import click
-import numpy as np
 import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
 from generation.generation import gpt2, gpt2_affect, gpt2_ctrl, openai_gpt, ctrl, xlm, pplm
+from scripts.data_preprocessing.collate_prompts_experiment import collate
 from utils.perspective_api import PerspectiveAPI
 from utils.utils import load_cache, load_jsonl
-from scripts.data_preprocessing.collate_prompts_experiment import collate
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
