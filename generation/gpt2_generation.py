@@ -20,7 +20,8 @@ def adjust_length_to_model(length, max_sequence_length):
     return length
 
 
-class GPT2Generator:
+# TODO: convert to HuggingFace pipeline
+class GPT2Generation:
     STOP_TOKEN = "<|endoftext|>"
 
     def __init__(self, model: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', tokenizer: str = 'gpt2', seed: int = 42):
@@ -169,7 +170,7 @@ class GPT2Generator:
 
 
 def test_generate():
-    generator = GPT2Generator()
+    generator = GPT2Generation()
     prompt = [
         '<|endoftext|>in this paper we',
         '<|endoftext|>we are trying to',
@@ -180,7 +181,7 @@ def test_generate():
 
 
 def test_generate_multiple():
-    generator = GPT2Generator()
+    generator = GPT2Generation()
     prompt = 'in this paper we'
     out = generator.generate_multiple(prompt)
     print(*out, sep='\n')

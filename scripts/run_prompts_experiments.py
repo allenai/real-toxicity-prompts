@@ -18,10 +18,10 @@ from transformers.pipelines import pipeline
 
 from models.affect_lm import AffectGPT2LMHeadModel
 from utils.perspective_api import perspective_api_request
-from utils.generation import GPT2Generator
-from utils.pplm_generation import PPLMGeneration
+from generation.gpt2_generation import GPT2Generation
+from generation.pplm_generation import PPLMGeneration
 from utils.utils import batchify
-from utils.xlm_generation import XLNetGenerator
+from generation.xlm_generation import XLNetGenerator
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
 
@@ -242,7 +242,7 @@ def _gpt2_helper(prompts: pd.Series,
                  max_len: int,
                  num_samples: int,
                  batch_size: int,
-                 generator: GPT2Generator,
+                 generator: GPT2Generation,
                  out_file: Path,
                  **generate_kwargs):
     # Repeat prompts
@@ -285,7 +285,7 @@ def gpt2_ctrl(prompts: pd.Series,
               model_name_or_path: str,
               out_file: Path):
     # Use default gpt2 architecture
-    generator = GPT2Generator(model_name_or_path)
+    generator = GPT2Generation(model_name_or_path)
 
     # Add some special tokens (inline metadata)
     with open(Path(model_name_or_path) / 'added_tokens.json') as f:
@@ -319,7 +319,7 @@ def gpt2_affect(prompts: pd.Series,
                 out_file: Path) -> Iterable[str]:
     # Setup AffectGPT2 for generation
     model = AffectGPT2LMHeadModel.from_pretrained(model_name_or_path)
-    generator = GPT2Generator(model)
+    generator = GPT2Generation(model)
     affect_label = F.one_hot(torch.LongTensor([target_class]), num_classes=num_classes).float().to(generator.device)
     model.set_affect_labels(affect_label)
     model.affect.beta = beta
@@ -341,7 +341,7 @@ def gpt2(prompts: pd.Series,
          out_file: Path,
          **generate_kwargs) -> Iterable[str]:
     # Setup model
-    generator = GPT2Generator(model_name_or_path)
+    generator = GPT2Generation(model_name_or_path)
 
     yield from _gpt2_helper(prompts=prompts,
                             max_len=max_len,
