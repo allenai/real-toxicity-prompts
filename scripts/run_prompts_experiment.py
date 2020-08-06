@@ -28,20 +28,13 @@ ALLOWED_MODELS = ['gpt2', 'gpt2-affect', 'gpt2-ctrl', 'gpt2-greedy', 'gpt2-naugh
 @click.option('--max-tokens', default=20, help='Number of tokens (usually BPE) to generate for each prompt.')
 @click.option('--batch-size', default=32)
 @click.option('--resume/--no-resume', default=False)
-def main(output_dir: str,
-         dataset_file: Optional[str],
-         use_eos: bool,
-         model: str,
-         model_type: str,
-         n: int,
-         max_tokens: int,
-         batch_size: int,
-         perspective_rate_limit: int,
-         resume: bool):
+def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str, model_type: str, n: int,
+         max_tokens: int, batch_size: int, perspective_rate_limit: int, resume: bool):
     # Load prompts
     if dataset_file:
         assert not use_eos
         # Load prompts from dataset file
+        assert dataset_file.endswith('.jsonl')
         dataset = pd.read_json(dataset_file, lines=True)
         prompts = pd.json_normalize(dataset['prompt'])['text']
     elif use_eos:
@@ -171,8 +164,8 @@ def main(output_dir: str,
     # Generate and collate perspective scores
     generations = []
     for i, gen in enumerate(generations_iter):
-        perspective(f'generation-{i}', gen)
         generations.append(gen)
+        perspective(f'generation-{i}', gen)
 
     torch.cuda.empty_cache()
     perspective.stop()

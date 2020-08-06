@@ -203,8 +203,9 @@ def _gpt2_helper(prompts: pd.Series,
     prompts = prompts[num_cached_generations:]
     for prompt in tqdm(batchify(prompts, batch_size),
                        total=math.ceil(len(prompts) / batch_size),
-                       desc=f'Batch generation (bs={batch_size})',
-                       dynamic_ncols=True):
+                       desc=f'GPT-2 Generation',
+                       dynamic_ncols=True,
+                       postfix={'batch_size': batch_size}):
         # Generate
         try:
             batch = generator.generate(prompt, max_len, **generate_kwargs)

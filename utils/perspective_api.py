@@ -1,13 +1,11 @@
 import collections
 import json
+import multiprocessing as mp
 import time
-from multiprocessing.context import Process
-from multiprocessing.queues import Queue
 from pathlib import Path
 from typing import List, Union, Optional, Tuple, Dict, Any, Iterable
 
 from googleapiclient import discovery
-from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 from tqdm.auto import tqdm
 
@@ -111,7 +109,7 @@ class PerspectiveAPI:
 
                 i += len(batch)
                 pbar.update(len(batch))
-                pbar.set_postfix(failures=num_failures)
+                pbar.set_postfix(failures=num_failures, rate_limt=self.rate_limit)
 
     @staticmethod
     def _make_service(api_key: str):
@@ -119,7 +117,7 @@ class PerspectiveAPI:
         return discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
 
     @staticmethod
-    def _make_request(text: str, service: Resource):
+    def _make_request(text: str, service):
         analyze_request = {
             'comment': {'text': text},
             'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES},
@@ -144,9 +142,9 @@ class PerspectiveWorker:
         total -= len(self.requests_handled)
 
         # Setup worker thread
-        self.task_queue = Queue()
-        self.process = Process(target=self.perspective_worker,
-                               args=(self.task_queue, out_file, total, rate_limit))
+        self.task_queue = mp.Queue()
+        self.process = mp.Process(target=self.perspective_worker,
+                                  args=(self.task_queue, out_file, total, rate_limit))
         self.process.start()
 
     def __call__(self, request_id: str, text: str):
@@ -165,7 +163,7 @@ class PerspectiveWorker:
         self.process.join()
 
     @classmethod
-    def perspective_worker(cls, queue: Queue, responses_file: Path, total: int, rate_limit: int):
+    def perspective_worker(cls, queue: mp.Queue, responses_file: Path, total: int, rate_limit: int):
         queue_iter = iter(queue.get, cls.SENTINEL)
         api = PerspectiveAPI(rate_limit=rate_limit)
         pbar = tqdm(total=total, dynamic_ncols=True, position=1)
