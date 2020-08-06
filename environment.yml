@@ -26,5 +26,6 @@ dependencies:
   - matplotlib
   - scikit-learn
   - seaborn
+  - pytest
   - pytorch::pytorch
   - pytorch::torchtext

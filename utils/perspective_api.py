@@ -69,11 +69,7 @@ class PerspectiveAPI:
             batch_request.add(self._make_request(text, self.service), callback=response_callback, request_id=uid)
         batch_request.execute()
 
-        # Unpack responses
-        scores, errors = zip(*responses.values())
-        scores = map(unpack_scores, scores)
-
-        return list(zip(scores, errors))
+        return list(responses.values())
 
     def request_bulk(self,
                      corpus: Union[Iterable[str], Iterable[Tuple[str, str]]],
@@ -91,11 +87,11 @@ class PerspectiveAPI:
 
         i = 0
         num_failures = 0
-        with output_file.open('w') as f:
+        with output_file.open('a') as f:
             for batch in batchify(corpus, self.rate_limit):
                 request_ids = None
                 if isinstance(batch[0], tuple):
-                    batch, request_ids = zip(*batch)
+                    request_ids, batch = zip(*batch)
 
                 for j, (response, exception) in enumerate(self.request(batch)):
                     response_dict = {
