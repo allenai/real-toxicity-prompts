@@ -8,8 +8,6 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
-from utils.constants import TEXTS_DIR
-
 T = TypeVar('T')
 
 
@@ -47,10 +45,6 @@ def set_seed(seed, n_gpu):
     torch.manual_seed(seed)
     if n_gpu > 0:
         torch.cuda.manual_seed_all(seed)
-
-
-def load_text(filename: str) -> str:
-    return (TEXTS_DIR / filename).read_text()
 
 
 def load_jsonl(file: Union[str, Path]) -> Iterable[Any]:
