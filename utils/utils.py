@@ -53,6 +53,13 @@ def load_jsonl(file: Union[str, Path]) -> Iterable[Any]:
             yield json.loads(line)
 
 
+def load_cache(file: Path):
+    if file.exists():
+        with file.open() as f:
+            for line in tqdm(f, desc=f'Loading cache from {file}'):
+                yield json.loads(line)
+
+
 def big_flat_jsonl_to_csv(jsonl_file, csv_file, chunksize=100_000, header=True):
     chunks = pd.read_json(jsonl_file, lines=True, chunksize=chunksize)
 
