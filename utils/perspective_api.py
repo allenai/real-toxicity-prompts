@@ -1,11 +1,16 @@
+import collections
+import json
 import time
-from typing import List, Union, Optional, Tuple, Dict, Any
+from pathlib import Path
+from typing import List, Union, Optional, Tuple, Dict, Any, Iterable
 
 from googleapiclient import discovery
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
+from tqdm.auto import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_KEY
+from utils.utils import batchify
 
 
 def unpack_scores(response_json: dict) -> Optional[Tuple[dict, dict]]:
@@ -69,6 +74,46 @@ class PerspectiveAPI:
         scores = map(unpack_scores, scores)
 
         return list(zip(scores, errors))
+
+    def request_bulk(self,
+                     corpus: Union[Iterable[str], Iterable[Tuple[str, str]]],
+                     output_file: Union[str, Path],
+                     pbar: tqdm = None):
+        # Check for output file
+        output_file = Path(output_file)
+        assert not output_file.exists()
+
+        # Set up progress bar
+        if not pbar:
+            total = len(corpus) if isinstance(corpus, collections.abc.Sequence) else None
+            pbar = tqdm(total=total, dynamic_ncols=True)
+        pbar.set_description(f'Perspective API')
+
+        i = 0
+        num_failures = 0
+        with output_file.open('w') as f:
+            for batch in batchify(corpus, self.rate_limit):
+                request_ids = None
+                if isinstance(batch[0], tuple):
+                    batch, request_ids = zip(*batch)
+
+                for j, (response, exception) in enumerate(self.request(batch)):
+                    response_dict = {
+                        'request_id': request_ids[j] if request_ids else i,
+                        'response': response,
+                        'error': str(exception) if exception else None
+                    }
+
+                    # Save response
+                    json.dump(response_dict, f)
+                    f.write('\n')
+
+                    if exception:
+                        num_failures += 1
+
+                i += len(batch)
+                pbar.update(len(batch))
+                pbar.set_postfix(failures=num_failures)
 
     @staticmethod
     def _make_service(api_key: str):
