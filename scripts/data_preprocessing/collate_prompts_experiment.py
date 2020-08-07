@@ -24,42 +24,37 @@ def make_generations_col(generations, responses):
 
 def collate(dataset: Optional[pd.DataFrame], generations: List[str], responses: Iterable[Dict[str, Any]],
             output_file: str):
-    assert len(generations) % len(dataset) == 0
-    n = len(generations) // len(dataset)
-    print(f"Detected samples per prompt:", n)
-
-    generations_col_iter = batchify(make_generations_col(generations, responses), n)
-    generations_col = list(tqdm(generations_col_iter, total=len(dataset), desc='Collating files'))
-
+    generations_col_iter = make_generations_col(generations, responses)
     if dataset is None:
-        # TODO: check that this works
-        dataset = pd.Series(generations_col)
+        generations_col = list(tqdm(generations_col_iter, total=len(generations), desc='Collating files'))
+        dataset = pd.DataFrame(generations_col)
     else:
+        assert len(generations) % len(dataset) == 0
+        n = len(generations) // len(dataset)
+        print(f"Detected samples per prompt:", n)
+        generations_col = list(tqdm(batchify(generations_col_iter, n), total=len(dataset), desc='Collating files'))
         dataset['generations'] = generations_col
 
     dataset.to_json(output_file, orient='records', lines=True)
 
 
 @click.command()
-@click.option('--eos', required=False)
-@click.option('--dataset_file', required=False)
+@click.option('--use-eos/--use-dataset', default=False)
+@click.option('--dataset_file')
 @click.option('--generations_file', required=True)
 @click.option('--perspective_file', required=True)
 @click.argument('output_file')
-def collate_prompts_experiment(eos: bool, dataset_file: str, generations_file: str, perspective_file: str,
+def collate_prompts_experiment(use_eos: bool, dataset_file: str, generations_file: str, perspective_file: str,
                                output_file: str):
-    assert eos or dataset_file
+    assert use_eos or dataset_file
 
-    prompts = pd.read_json(dataset_file, lines=True)
-    print("Loaded prompts")
-
-    # FIXME: assumes that generations_file is jsonl strings (no metadata)
+    print("Loading data")
+    dataset = pd.read_json(dataset_file, lines=True) if not use_eos else None
     generations = pd.read_json(generations_file, lines=True)
-    print("Loaded generations")
-
     responses = load_jsonl(perspective_file)
 
-    collate(prompts, generations, responses, output_file)
+    print("Collating")
+    collate(dataset, generations, responses, output_file)
 
 
 if __name__ == '__main__':
