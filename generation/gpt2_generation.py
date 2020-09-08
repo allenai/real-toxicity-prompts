@@ -3,7 +3,8 @@ from typing import Union, List
 
 import torch
 import torch.nn.functional as F
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, modeling_utils, GPT2PreTrainedModel
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2PreTrainedModel
+from transformers.generation_utils import top_k_top_p_filtering, calc_banned_bad_words_ids
 
 from utils import utils
 
@@ -20,7 +21,8 @@ def adjust_length_to_model(length, max_sequence_length):
     return length
 
 
-class GPT2Generator:
+# TODO: convert to HuggingFace pipeline
+class GPT2Generation:
     STOP_TOKEN = "<|endoftext|>"
 
     def __init__(self, model: Union[str, Path, GPT2PreTrainedModel] = 'gpt2', tokenizer: str = 'gpt2', seed: int = 42):
@@ -84,7 +86,7 @@ class GPT2Generator:
 
                 if bad_words_ids is not None:
                     # calculate a list of banned tokens according to bad words
-                    banned_tokens = modeling_utils.calc_banned_bad_words_ids(input_ids, bad_words_ids)
+                    banned_tokens = calc_banned_bad_words_ids(input_ids, bad_words_ids)
 
                     # TODO: use a vectorized operation
                     for batch_idx in range(batch_size):
@@ -95,7 +97,7 @@ class GPT2Generator:
                     if temperature != 1.0:
                         next_token_logits = next_token_logits / temperature
                     # Top-p/top-k filtering
-                    next_token_logits = modeling_utils.top_k_top_p_filtering(next_token_logits, top_k=k, top_p=p)
+                    next_token_logits = top_k_top_p_filtering(next_token_logits, top_k=k, top_p=p)
                     # Sample
                     probs = F.softmax(next_token_logits, dim=-1)
                     next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
@@ -169,7 +171,7 @@ class GPT2Generator:
 
 
 def test_generate():
-    generator = GPT2Generator()
+    generator = GPT2Generation()
     prompt = [
         '<|endoftext|>in this paper we',
         '<|endoftext|>we are trying to',
@@ -180,7 +182,7 @@ def test_generate():
 
 
 def test_generate_multiple():
-    generator = GPT2Generator()
+    generator = GPT2Generation()
     prompt = 'in this paper we'
     out = generator.generate_multiple(prompt)
     print(*out, sep='\n')

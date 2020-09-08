@@ -7,21 +7,27 @@ dependencies:
   - pip
   - pip:
       - click
+      - google-api-python-client
       - nltk
+      - openai
       - tensorboard
       - tensorboardX
-      - google-api-python-client
-      - git+git://github.com/thesamuel/transformers@lm-toxicity
-      - psaw
       - spacy
       - sqlalchemy
-      - torchtext
+      - tldextract
       - tqdm
+      - transformers
 
-  - dask
-  - jupyterlab
-  - matplotlib
+  - ipython
   - numpy
   - pandas
-  - pytorch
+  - scipy
+  - dask
+  - jupyter
+  - jupyterlab
+  - matplotlib
   - scikit-learn
+  - seaborn
+  - pytest
+  - pytorch::pytorch
+  - pytorch::torchtext

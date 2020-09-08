@@ -1,22 +1,22 @@
-import json
-import time
 import collections
+import json
+import multiprocessing as mp
+import time
 from pathlib import Path
-import socket
-from typing import List, Union, Optional, Iterable, Tuple
+from typing import List, Union, Optional, Tuple, Dict, Any, Iterable
 
-import httplib2
 from googleapiclient import discovery
-from googleapiclient.discovery import Resource
+from googleapiclient.errors import HttpError
 from tqdm.auto import tqdm
 
-from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_LEN_LIMIT, PERSPECTIVE_API_KEY
-from utils.utils import batchify
-
-Document = Union[Path, str, Tuple[str, str]]
+from utils.constants import PERSPECTIVE_API_ATTRIBUTES, PERSPECTIVE_API_KEY
+from utils.utils import batchify, load_cache
 
 
-def unpack_scores(response_json: dict) -> Tuple[dict, dict]:
+def unpack_scores(response_json: dict) -> Optional[Tuple[dict, dict]]:
+    if not response_json:
+        return None
+
     attribute_scores = response_json['attributeScores'].items()
 
     summary_scores = {}
@@ -38,47 +38,78 @@ def unpack_scores(response_json: dict) -> Tuple[dict, dict]:
 
 
 class PerspectiveAPI:
-    def __init__(self, api_key: str = PERSPECTIVE_API_KEY):
+    def __init__(self, api_key: str = PERSPECTIVE_API_KEY, rate_limit: int = 25):
         self.service = self._make_service(api_key)
         self.last_request_time = -1  # satisfies initial condition
+        self.rate_limit = rate_limit
+        self.next_uid = 0
 
-    def request(self, batch: List[Tuple[str, str]]) -> List[Tuple[str, Tuple[Optional[dict], Optional[str]]]]:
+    def request(self, texts: Union[str, List[str]]) -> List[Tuple[Optional[Dict[str, Any]], Optional[HttpError]]]:
+        if isinstance(texts, str):
+            texts = [texts]
+
         # Rate limit to 1 batch request per second
+        assert len(texts) <= self.rate_limit
         time_since_last_request = time.time() - self.last_request_time
         if time_since_last_request < 1:
             time.sleep(1 - time_since_last_request)
         self.last_request_time = time.time()
 
-        # Keys guaranteed in insertion order
-        responses = {request_id: None for request_id, _ in batch}
+        # Keys guaranteed in insertion order (Python 3.7+)
+        responses = {str(uid): None for uid in range(self.next_uid, self.next_uid + len(texts))}
+        self.next_uid += len(texts)
 
         def response_callback(request_id, response, exception):
             nonlocal responses
             responses[request_id] = (response, exception)
 
-        # Create batch
-        batch_request = self.service.new_batch_http_request()
-        for request_id, text in batch:
-            if len(text) > PERSPECTIVE_API_LEN_LIMIT:
-                responses[request_id] = (
-                    None, f'{request_id}: document length was {len(text)}, limit is {PERSPECTIVE_API_LEN_LIMIT}'
-                )
-                continue
-
-            batch_request.add(self._make_request(text, self.service), callback=response_callback, request_id=request_id)
-
         # Make API request
-        try:
-            batch_request.execute()
-        except (httplib2.HttpLib2Error, socket.timeout) as e:
-            print("Error while executing request with ids:", *responses.keys())
-            print(e)
-            print("Returning errors for batch. Please retry this request again later.")
-            responses = {request_id: (None, str(e)) for request_id, _ in batch}
+        batch_request = self.service.new_batch_http_request()
+        for uid, text in zip(responses.keys(), texts):
+            batch_request.add(self._make_request(text, self.service), callback=response_callback, request_id=uid)
+        batch_request.execute()
 
-        # Return list of tuples of (request_id, (response, exception)) in same order as request_id in input
-        # (dict keys have insertion order guarantee in Python 3.7+)
-        return list(responses.items())
+        return list(responses.values())
+
+    def request_bulk(self,
+                     corpus: Union[Iterable[str], Iterable[Tuple[str, str]]],
+                     output_file: Union[str, Path],
+                     pbar: tqdm = None):
+        # Check for output file
+        output_file = Path(output_file)
+        assert not output_file.exists()
+
+        # Set up progress bar
+        if not pbar:
+            total = len(corpus) if isinstance(corpus, collections.abc.Sequence) else None
+            pbar = tqdm(total=total, dynamic_ncols=True)
+        pbar.set_description(f'Perspective API')
+
+        i = 0
+        num_failures = 0
+        with output_file.open('a') as f:
+            for batch in batchify(corpus, self.rate_limit):
+                request_ids = None
+                if isinstance(batch[0], tuple):
+                    request_ids, batch = zip(*batch)
+
+                for j, (response, exception) in enumerate(self.request(batch)):
+                    response_dict = {
+                        'request_id': request_ids[j] if request_ids else i,
+                        'response': response,
+                        'error': str(exception) if exception else None
+                    }
+
+                    # Save response
+                    json.dump(response_dict, f)
+                    f.write('\n')
+
+                    if exception:
+                        num_failures += 1
+
+                i += len(batch)
+                pbar.update(len(batch))
+                pbar.set_postfix(failures=num_failures, rate_limt=self.rate_limit)
 
     @staticmethod
     def _make_service(api_key: str):
@@ -86,7 +117,7 @@ class PerspectiveAPI:
         return discovery.build('commentanalyzer', 'v1alpha1', developerKey=api_key)
 
     @staticmethod
-    def _make_request(text: str, service: Resource):
+    def _make_request(text: str, service):
         analyze_request = {
             'comment': {'text': text},
             'requestedAttributes': {attr: {} for attr in PERSPECTIVE_API_ATTRIBUTES},
@@ -95,55 +126,62 @@ class PerspectiveAPI:
         return service.comments().analyze(body=analyze_request)
 
 
-def prepare_batch(batch: List[Document], offset: int):
-    if isinstance(batch[0], Path):
-        return [(file.name, file.read_text()) for file in batch]
-    elif isinstance(batch[0], str):
-        request_ids = [str(i) for i in range(offset, offset + len(batch))]
-        return list(zip(request_ids, batch))
-    elif isinstance(batch[0], tuple):
-        assert len(batch[0]) == 2 and isinstance(batch[0][0], str) and isinstance(batch[0][1], str)
-        return batch
-    else:
-        raise RuntimeError(f'Unexpected element type ({type(batch[0])} in batch for: {batch[0]}')
+class PerspectiveWorker:
+    SENTINEL = 'STOP'
+
+    def __init__(self, out_file: Path, total: int, rate_limit: int):
+        if not rate_limit:
+            print("Disabling Perspective API (rps is 0)")
+            self.enabled = False
+            return
+        self.enabled = True
+
+        self.requests_handled = set()
+        for response in load_cache(out_file):
+            self.requests_handled.add(response['request_id'])
+        total -= len(self.requests_handled)
+
+        # Setup worker thread
+        self.task_queue = mp.Queue()
+        self.process = mp.Process(target=self.perspective_worker,
+                                  args=(self.task_queue, out_file, total, rate_limit))
+        self.process.start()
+
+    def __call__(self, request_id: str, text: str):
+        if not self.enabled:
+            return
+
+        if request_id not in self.requests_handled:
+            self.task_queue.put((request_id, text))
+
+    def stop(self):
+        if not self.enabled:
+            return
+
+        print("Waiting for Perspective to finish...")
+        self.task_queue.put(self.SENTINEL)
+        self.process.join()
+
+    @classmethod
+    def perspective_worker(cls, queue: mp.Queue, responses_file: Path, total: int, rate_limit: int):
+        queue_iter = iter(queue.get, cls.SENTINEL)
+        api = PerspectiveAPI(rate_limit=rate_limit)
+        pbar = tqdm(total=total, dynamic_ncols=True, position=1)
+        api.request_bulk(queue_iter, output_file=responses_file, pbar=pbar)
 
 
-def perspective_api_request(corpus: Union[Iterable[Document], str],
-                            responses_file: Optional[Path] = None,
-                            api_key: str = PERSPECTIVE_API_KEY,
-                            requests_per_second: int = 25,
-                            pbar: tqdm = None):
-    if isinstance(corpus, str):
-        corpus = [corpus]
+def test_perspective_api():
+    api = PerspectiveAPI()
 
-    # Set up api
-    perspective_api = PerspectiveAPI(api_key)
+    text_success = "Testing"
+    text_error = 'x' * (20480 + 1)
 
-    # Set up progress bar
-    total = len(corpus) if isinstance(corpus, collections.abc.Sequence) else None
-    pbar = pbar or tqdm(total=total, dynamic_ncols=True)
+    score_1, error_1 = api.request(text_success)[0]
+    assert score_1 and not error_1
 
-    i = 0
-    num_failures = 0
-    for batch in batchify(corpus, requests_per_second):
-        batch = prepare_batch(batch, offset=i)
-        for request_id, (response, exception) in perspective_api.request(batch):
-            assert response or exception
-            response_dict = {
-                'request_id': request_id,
-                'success': not exception,
-                'response': response,
-                'error': str(exception) if exception else None
-            }
+    score_2, error_2 = api.request(text_error)[0]
+    assert not score_2 and isinstance(error_2, HttpError)
 
-            # Save response
-            if responses_file:
-                with responses_file.open('a') as f:
-                    print(json.dumps(response_dict), file=f)
-
-            if exception:
-                num_failures += 1
-
-        i += requests_per_second
-        pbar.update(len(batch))
-        pbar.set_description(f'Perspective API ({num_failures} failures)')
+    multi_score, multi_error = zip(*api.request([text_success, text_error]))
+    assert multi_score == (score_1, score_2)
+    assert tuple(map(str, multi_error)) == tuple(map(str, (error_1, error_2)))

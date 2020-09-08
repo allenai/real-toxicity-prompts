@@ -8,8 +8,6 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
-from utils.constants import TEXTS_DIR
-
 T = TypeVar('T')
 
 
@@ -49,14 +47,17 @@ def set_seed(seed, n_gpu):
         torch.cuda.manual_seed_all(seed)
 
 
-def load_text(filename: str) -> str:
-    return (TEXTS_DIR / filename).read_text()
-
-
 def load_jsonl(file: Union[str, Path]) -> Iterable[Any]:
     with open(file) as f:
         for line in f:
             yield json.loads(line)
+
+
+def load_cache(file: Path):
+    if file.exists():
+        with file.open() as f:
+            for line in tqdm(f, desc=f'Loading cache from {file}'):
+                yield json.loads(line)
 
 
 def big_flat_jsonl_to_csv(jsonl_file, csv_file, chunksize=100_000, header=True):
