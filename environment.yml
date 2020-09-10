@@ -31,3 +31,4 @@ dependencies:
   - pytest
   - pytorch::pytorch
   - pytorch::torchtext
+  - pytorch::cudatoolkit=10.2
