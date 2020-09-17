@@ -1,18 +1,44 @@
 import pickle
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Iterable, Dict, Any
 
 import click
 import pandas as pd
 import torch
+from tqdm import tqdm
 
 from generation.generation import gpt2, gpt2_affect, gpt2_ctrl, openai_gpt, ctrl, xlm, pplm
-from scripts.data_preprocessing.collate_prompts_experiment import collate
-from utils.perspective_api import PerspectiveWorker
-from utils.utils import load_jsonl
+from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
+from utils.perspective_api import PerspectiveWorker, unpack_scores
+from utils.utils import load_jsonl, batchify
 
 ALLOWED_MODELS = ['gpt2', 'gpt2-affect', 'gpt2-ctrl', 'gpt2-greedy', 'gpt2-naughty-list',
                   'pplm', 'ctrl', 'openai-gpt', 'xlnet']
+
+
+def make_generations_col(generations, responses):
+    for generation, response in zip(generations, responses):
+        if response['response']:
+            response = unpack_scores(response['response'])[0]
+        else:
+            response = {x: None for x in PERSPECTIVE_API_ATTRIBUTES_LOWER}
+        yield {'text': generation, **response}
+
+
+def collate(dataset: Optional[pd.DataFrame], generations: List[str], responses: Iterable[Dict[str, Any]],
+            output_file: str):
+    generations_col_iter = make_generations_col(generations, responses)
+    if dataset is None:
+        generations_col = list(tqdm(generations_col_iter, total=len(generations), desc='Collating files'))
+        dataset = pd.DataFrame(generations_col)
+    else:
+        assert len(generations) % len(dataset) == 0
+        n = len(generations) // len(dataset)
+        print(f"Detected samples per prompt:", n)
+        generations_col = list(tqdm(batchify(generations_col_iter, n), total=len(dataset), desc='Collating files'))
+        dataset['generations'] = generations_col
+
+    dataset.to_json(output_file, orient='records', lines=True)
 
 
 @click.command()
