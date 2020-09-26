@@ -7,12 +7,12 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from generation.generation import gpt2, gpt2_affect, gpt2_ctrl, openai_gpt, ctrl, xlm, pplm
+from generation.generation import gpt2, gpt3, gpt2_affect, gpt2_ctrl, openai_gpt, ctrl, xlm, pplm
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.perspective_api import PerspectiveWorker, unpack_scores
 from utils.utils import load_jsonl, batchify
 
-ALLOWED_MODELS = ['gpt2', 'gpt2-affect', 'gpt2-ctrl', 'gpt2-greedy', 'gpt2-naughty-list',
+ALLOWED_MODELS = ['gpt3', 'gpt2', 'gpt2-affect', 'gpt2-ctrl', 'gpt2-greedy', 'gpt2-naughty-list',
                   'pplm', 'ctrl', 'openai-gpt', 'xlnet']
 
 
@@ -105,6 +105,13 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
     # TODO: move this logic into generation.py
     if model_type == 'gpt2':
         generations_iter = gpt2(prompts=prompts,
+                                max_len=max_tokens,
+                                num_samples=n,
+                                batch_size=batch_size,
+                                model_name_or_path=model,
+                                out_file=generations_file)
+    elif model_type == 'gpt3':
+        generations_iter = gpt3(prompts=prompts,
                                 max_len=max_tokens,
                                 num_samples=n,
                                 batch_size=batch_size,

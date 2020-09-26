@@ -5,8 +5,9 @@ import logging
 import math
 from functools import partial
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, List
 
+import openai
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
@@ -18,6 +19,7 @@ from generation.gpt2_generation import GPT2Generation
 from generation.pplm_generation import PPLMGeneration
 from generation.xlm_generation import XLNetGenerator
 from models.affect_lm import AffectGPT2LMHeadModel
+from utils.constants import OPENAI_API_KEY
 from utils.utils import batchify, load_cache
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
@@ -298,3 +300,31 @@ def gpt2(prompts: pd.Series,
                             generator=generator,
                             out_file=out_file,
                             **generate_kwargs)
+
+
+def gpt3(prompts: pd.Series,
+         max_len: int,
+         num_samples: int,
+         batch_size: int,
+         model_name_or_path: str,
+         out_file: Path) -> Iterable[str]:
+    openai.api_key = OPENAI_API_KEY
+
+    def request(prompts: List[str]):
+        # Retry request (handles connection errors, timeouts, and overloaded API)
+        while True:
+            try:
+                return openai.Completion.create(
+                    engine=model_name_or_path,
+                    prompt=prompts,
+                    max_tokens=max_len,
+                    n=1
+                )
+            except Exception as e:
+                tqdm.write(str(e))
+                tqdm.write("Retrying...")
+
+    prompts = prompts.repeat(num_samples)
+    for batch in tqdm(batchify(prompts, batch_size)):
+        response = request(batch)
+        yield from [choice['text'] for choice in response['choices']]
