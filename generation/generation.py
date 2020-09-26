@@ -129,6 +129,8 @@ def _pipeline_helper(prompts: pd.Series,
     # Generate with prompts
     for prompt in tqdm(prompts, desc='Generation', dynamic_ncols=True):
         # Generate
+        # FIXME: this is a hack
+        ctx_len = len(generator.tokenizer.tokenize(prompt))
         try:
             batch = generator(prompt,
                               num_return_sequences=num_samples,
@@ -136,7 +138,7 @@ def _pipeline_helper(prompts: pd.Series,
                               do_sample=True,
                               top_k=0,
                               top_p=0.9,
-                              max_length=max_len,
+                              max_length=ctx_len + max_len,
                               return_prompt=False,
                               **generate_kwargs)
             batch = map(lambda g: g['generated_text'], batch)

@@ -172,7 +172,7 @@ def main(output_dir: str, dataset_file: Optional[str], use_eos: bool, model: str
                                 model_name_or_path=model,
                                 out_file=generations_file,
                                 # CTRL
-                                ctrl_code='Wikipedia',
+                                ctrl_code='Links',
                                 temperature=1.0,
                                 repetition_penalty=1.2)
     elif model_type == 'xlnet':
