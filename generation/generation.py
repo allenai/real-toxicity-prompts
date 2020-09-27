@@ -141,11 +141,11 @@ def _pipeline_helper(prompts: pd.Series,
                               max_length=ctx_len + max_len,
                               return_prompt=False,
                               **generate_kwargs)
-            batch = map(lambda g: g['generated_text'], batch)
+            batch = map(lambda g: g['generated_text'][len(prompt):], batch)
         except RuntimeError as e:
             print("Error during generation with prompt:", prompt)
             print(e)
-            print("Emptying CUDA cache and retrying...")
+            print("Emptying CUDA cache and continuing...")
             torch.cuda.empty_cache()
 
             batch = ["GENERATION_ERROR_CUDA"] * num_samples
