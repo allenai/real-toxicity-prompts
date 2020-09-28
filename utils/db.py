@@ -64,12 +64,12 @@ class SpanScore(Base):
         return f"<SpanScore<id={self.id}, begin={self.begin}, end={self.end}>"
 
 
-def webtext_db_engine(**kwargs) -> Engine:
+def corpus_db_engine(**kwargs) -> Engine:
     return create_engine(f'sqlite:///{WEBTEXT_DB}', **kwargs)
 
 
-def webtext_db_session(**kwargs) -> Session:
-    engine = webtext_db_engine(**kwargs)
+def corpus_db_session(**kwargs) -> Session:
+    engine = corpus_db_engine(**kwargs)
     session = Session(bind=engine)
     return session
 

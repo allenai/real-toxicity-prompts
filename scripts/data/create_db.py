@@ -1,3 +1,5 @@
+# TODO: merge into create_text_db.py
+
 from pathlib import Path
 from typing import List, Union
 
@@ -8,7 +10,7 @@ from tqdm import tqdm
 
 from utils.constants import PERSPECTIVE_API_ATTRIBUTES_LOWER
 from utils.perspective_api import unpack_scores
-from utils.webtext_db import DocScore, SpanScore
+from utils.db import DocScore, SpanScore
 from utils.utils import load_jsonl
 
 ATTRIBUTES_SET = set(PERSPECTIVE_API_ATTRIBUTES_LOWER)

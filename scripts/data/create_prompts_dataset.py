@@ -7,7 +7,7 @@ from spacy.tokens.doc import Doc
 from sqlalchemy.sql.functions import random
 
 from utils.constants import TEXTS_DIR, OPENWEBTEXT_DB
-from utils.openwebtext_db import SpanScore, openwebtext_db_session
+from utils.db import SpanScore, corpus_db_session
 import click
 
 # Span constants
@@ -58,7 +58,9 @@ def create_prompts_dataset(out_file: str, n: float):
     if not OPENWEBTEXT_DB.exists():
         raise FileNotFoundError("Perspective database was not found.")
 
-    session = openwebtext_db_session()
+    session = corpus_db_session()
+
+    # TODO: do this for all four ranges of toxicity
     query = (
         session.query(SpanScore)
             .filter(SpanScore.toxicity < 0.25)
