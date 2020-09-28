@@ -1,5 +1,9 @@
 # Real Toxicity Prompts
-Work in progress, please revisit this page shortly for more in-depth instructions.
+[[Paper link]](https://arxiv.org/abs/2009.11462)
+[[Demo link]](https://toxicdegeneration.allenai.org/) 
+[[Data link]](https://open.quiltdata.com/b/ai2-datasets/tree/realtoxicityprompts/)
+
+Work in progress, please revisit this page soon for more in-depth instructions.
 
 ## Installing
 Run the commands provided in order to set up your environment:
@@ -11,7 +15,7 @@ with all necessary dependencies.
 
 ## Getting Started
 ### Getting the data
-Data is forthcoming.
+Data processing steps are forthcoming.
 
 ### Getting API access
 We used the following two APIs to run our experiments:
