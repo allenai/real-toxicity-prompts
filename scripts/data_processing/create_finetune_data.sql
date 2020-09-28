@@ -1,4 +1,4 @@
--- Import prompts data (only do this once)
+-- Import prompts data_processing (only do this once)
 -- .mode csv
 -- .import <PROMPTS_CSV_PATH> prompts
 

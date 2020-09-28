@@ -22,27 +22,28 @@ using a masked language modeling (MLM) loss.
 import logging
 import math
 import os
+import pickle
+import time
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, List
 
 import torch
-import torch.nn.functional as F
-from torch.utils.data import ConcatDataset
+from torch.utils.data import Dataset, ConcatDataset
+from tqdm import trange
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
     AutoConfig,
+    AutoModelWithLMHead,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
     PreTrainedTokenizer,
-    TextDataset,
     Trainer,
     TrainingArguments,
     set_seed,
+    torch_distributed_zero_first,
 )
-
-from models.affect_lm import NUM_AFFECTS, AffectGPT2LMHeadModel
 
 logger = logging.getLogger(__name__)
 
@@ -50,26 +51,62 @@ MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
 
-class AffectTextDataset(TextDataset):
+class CTRLTextDataset(Dataset):
     def __init__(
-            self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, affect_class: int,
+            self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, ctrl_code_tok: int,
             overwrite_cache=False, local_rank=-1,
     ):
-        super().__init__(tokenizer, file_path, block_size, overwrite_cache, local_rank)
-        self.affect_class = affect_class
+        assert os.path.isfile(file_path)
 
-    def __getitem__(self, i) -> Tuple[torch.Tensor, torch.Tensor]:
-        input_ids = torch.tensor(self.examples[i], dtype=torch.long)
-        affect_label = F.one_hot(torch.LongTensor([self.affect_class]), num_classes=NUM_AFFECTS).float()
-        return input_ids, affect_label
+        # Subtract 1 so we can prepend the CTRL code
+        block_size = block_size - tokenizer.num_special_tokens_to_add(pair=False) - 1
 
+        directory, filename = os.path.split(file_path)
+        cached_features_file = os.path.join(
+            directory, "cached_lm_{}_{}_{}".format(tokenizer.__class__.__name__, str(block_size), filename, ),
+        )
 
-class AffectDataCollator(DataCollatorForLanguageModeling):
-    def collate_batch(self, examples: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        input_ids, affect_labels = zip(*examples)
-        batch = super().collate_batch(input_ids)
-        batch['affect_labels'] = torch.stack(affect_labels)
-        return batch
+        with torch_distributed_zero_first(local_rank):
+            # Make sure only the first process in distributed training processes the dataset,
+            # and the others will use the cache.
+
+            if os.path.exists(cached_features_file) and not overwrite_cache:
+                start = time.time()
+                with open(cached_features_file, "rb") as handle:
+                    self.examples = pickle.load(handle)
+                logger.info(
+                    f"Loading features from cached file {cached_features_file} [took %.3f s]", time.time() - start
+                )
+
+            else:
+                logger.info(f"Creating features from dataset file at {directory}")
+
+                self.examples = []
+                with open(file_path, encoding="utf-8") as f:
+                    text = f.read()
+
+                tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
+
+                for i in trange(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
+                    self.examples.append(
+                        tokenizer.build_inputs_with_special_tokens([ctrl_code_tok] + tokenized_text[i: i + block_size])
+                    )
+                # Note that we are losing the last truncated example here for the sake of simplicity (no padding)
+                # If your dataset is small, first you should loook for a bigger one :-) and second you
+                # can change this behavior by adding (model specific) padding.
+
+                start = time.time()
+                with open(cached_features_file, "wb") as handle:
+                    pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                logger.info(
+                    f"Saving features into cached file %s [took %.3f s]", cached_features_file, time.time() - start
+                )
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, i) -> torch.Tensor:
+        return torch.tensor(self.examples[i], dtype=torch.long)
 
 
 @dataclass
@@ -97,21 +134,12 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
-    affect_beta: int = field(
-        default=1, metadata={"help": "Beta to set the AffectLM model to before training and eval"}
-    )
-    freeze_transformer: bool = field(
-        default=True, metadata={"help": "Freeze the transformer parameters."}
-    )
-    freeze_lm_head: bool = field(
-        default=True, metadata={"help": "Freeze the GPT-2 LM head parameters."}
-    )
 
 
 @dataclass
 class DataTrainingArguments:
     """
-    Arguments pertaining to what data we are going to input our model for training and eval.
+    Arguments pertaining to what data_processing we are going to input our model for training and eval.
     """
 
     train_data_files: Optional[str] = field(
@@ -125,6 +153,12 @@ class DataTrainingArguments:
         metadata={
             "nargs": "+",
         },
+    )
+    ctrl_codes: Optional[str] = field(
+        default=None,
+        metadata={
+            "nargs": "+"
+        }
     )
 
     mlm: bool = field(
@@ -143,18 +177,17 @@ class DataTrainingArguments:
         },
     )
     overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
+        default=False, metadata={"help": "Overwrite the cached training and eval sets"}
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
+def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, ctrl_codes: List[int], evaluate=False,
+                local_rank=-1):
     file_paths = args.eval_data_files if evaluate else args.train_data_files
-    if len(file_paths) != NUM_AFFECTS:
-        raise ValueError('There must be 1 data file for each affect class.')
     datasets = []
-    for i, file_path in enumerate(file_paths):
-        d = AffectTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size,
-                              affect_class=i, local_rank=local_rank)
+    for file_path, ctrl_code in zip(file_paths, ctrl_codes):
+        d = CTRLTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size,
+                            ctrl_code_tok=ctrl_code, local_rank=local_rank)
         datasets.append(d)
     return ConcatDataset(datasets)
 
@@ -169,7 +202,7 @@ def main():
 
     if data_args.eval_data_files is None and training_args.do_eval:
         raise ValueError(
-            "Cannot do evaluation without an evaluation data file. Either supply a file to --eval_data_file "
+            "Cannot do eval without an eval data_processing file. Either supply a file to --eval_data_file "
             "or remove the --do_eval argument."
         )
 
@@ -197,7 +230,7 @@ def main():
         bool(training_args.local_rank != -1),
         training_args.fp16,
     )
-    logger.info("Training/evaluation parameters %s", training_args)
+    logger.info("Training/eval parameters %s", training_args)
 
     # Set seed
     set_seed(training_args.seed)
@@ -226,8 +259,15 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
+    # Add CTRL codes to vocab
+    assert len(data_args.ctrl_codes) == len(data_args.eval_data_files) == len(data_args.ctrl_codes)
+    print("CTRL codes:", *data_args.ctrl_codes)
+    num_added_toks = tokenizer.add_tokens(data_args.ctrl_codes)
+    assert num_added_toks == len(data_args.ctrl_codes)
+    ctrl_code_toks = tokenizer.encode(data_args.ctrl_codes)
+
     if model_args.model_name_or_path:
-        model = AffectGPT2LMHeadModel.from_pretrained(
+        model = AutoModelWithLMHead.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
             config=config,
@@ -235,17 +275,9 @@ def main():
         )
     else:
         logger.info("Training new model from scratch")
-        model = AffectGPT2LMHeadModel.from_config(config)
+        model = AutoModelWithLMHead.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
-
-    model.affect.beta = model_args.affect_beta  # Affect beta set before training/eval
-    if model_args.freeze_transformer:
-        print("Freezing transformer weights")
-        model.freeze_transformer()
-    if model_args.freeze_lm_head:
-        print("Freezing LM head weights")
-        model.freeze_lm_head()
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
@@ -261,16 +293,16 @@ def main():
 
     # Get datasets
     train_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank)
+        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, ctrl_codes=ctrl_code_toks)
         if training_args.do_train
         else None
     )
     eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, evaluate=True)
+        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, evaluate=True, ctrl_codes=ctrl_code_toks)
         if training_args.do_eval
         else None
     )
-    data_collator = AffectDataCollator(
+    data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
 

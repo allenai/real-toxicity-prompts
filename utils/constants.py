@@ -20,8 +20,8 @@ except FileNotFoundError:
 ##############################
 # Paths
 ##############################
-SHARED_DIR = Path('/data/language-model-toxicity')
-DATA_DIR = SHARED_DIR / 'data'
+SHARED_DIR = Path('/data_processing/language-model-toxicity')
+DATA_DIR = SHARED_DIR / 'data_processing'
 OUTPUT_DIR = Path('output')
 
 OPENWEBTEXT_DB = DATA_DIR / 'openwebtext-perspective.db'

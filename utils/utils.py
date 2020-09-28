@@ -34,7 +34,7 @@ def first(iterable):
 
 def save_gpt2_training_data(corpus: Sequence[str], out_file: Union[str, Path], eos_token='<|endoftext|>'):
     with open(out_file, 'a') as f:
-        for i, text in enumerate(tqdm(corpus, desc='Saving training data')):
+        for i, text in enumerate(tqdm(corpus, desc='Saving training data_processing')):
             print(text, file=f, end='')
             if i != len(corpus) - 1:
                 print(eos_token, file=f, end='')
