@@ -17,57 +17,11 @@ from transformers.pipelines import pipeline
 
 from generation.gpt2_generation import GPT2Generation
 from generation.pplm_generation import PPLMGeneration
-from generation.xlm_generation import XLNetGenerator
 from models.affect_lm import AffectGPT2LMHeadModel
 from utils.constants import OPENAI_API_KEY
 from utils.utils import batchify, load_cache
 
 logging.disable(logging.CRITICAL)  # Disable logging from transformers
-
-
-def xlm(prompts: pd.Series,
-        max_len: int,
-        num_samples: int,
-        batch_size: int,
-        out_file: Path,
-        **generate_kwargs):
-    # Repeat prompts
-    prompts = prompts.repeat(num_samples)
-
-    # Resume generation
-    num_cached_generations = 0
-    for generation in load_cache(out_file):
-        yield generation
-        num_cached_generations += 1
-    prompts = prompts[num_cached_generations:]
-
-    if prompts.empty:
-        return
-
-    # Setup model
-    generator = XLNetGenerator()
-    print("Loaded XLNetGenerator")
-
-    # Generate
-    for prompt in tqdm(batchify(prompts, batch_size),
-                       total=math.ceil(len(prompts) / batch_size),
-                       desc=f'Batch generation (bs={batch_size})',
-                       dynamic_ncols=True):
-        # Generate
-        try:
-            batch = generator(prompt, max_len=max_len, **generate_kwargs)
-        except RuntimeError as e:
-            print("Error during generation with prompt:", prompt)
-            print(e)
-            print("Emptying CUDA cache and retrying...")
-            torch.cuda.empty_cache()
-
-            batch = ["GENERATION_ERROR_CUDA"] * len(prompt)
-
-        for generation in batch:
-            with out_file.open('a') as f:
-                print(json.dumps(generation), file=f)
-            yield generation
 
 
 def pplm(prompts: pd.Series,
