@@ -22,19 +22,21 @@ using a masked language modeling (MLM) loss.
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, List, Dict
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
     AutoConfig,
+    AutoModelWithLMHead,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
+    LineByLineTextDataset,
     PreTrainedTokenizer,
     TextDataset,
     Trainer,
@@ -42,34 +44,21 @@ from transformers import (
     set_seed,
 )
 
-from models.affect_lm import NUM_AFFECTS, AffectGPT2LMHeadModel
+from models.affect_lm import AffectGPT2LMHeadModel
+from scripts.evaluation.webtext_dataset import WebTextPretokenizedDataset
 
 logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
+# Controllable model settings
+AFFECT_LABEL_IDX = 0
+AFFECT_NUM_LABELS = 2
 
-class AffectTextDataset(TextDataset):
-    def __init__(
-            self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, affect_class: int,
-            overwrite_cache=False, local_rank=-1,
-    ):
-        super().__init__(tokenizer, file_path, block_size, overwrite_cache, local_rank)
-        self.affect_class = affect_class
-
-    def __getitem__(self, i) -> Tuple[torch.Tensor, torch.Tensor]:
-        input_ids = torch.tensor(self.examples[i], dtype=torch.long)
-        affect_label = F.one_hot(torch.LongTensor([self.affect_class]), num_classes=NUM_AFFECTS).float()
-        return input_ids, affect_label
-
-
-class AffectDataCollator(DataCollatorForLanguageModeling):
-    def collate_batch(self, examples: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        input_ids, affect_labels = zip(*examples)
-        batch = super().collate_batch(input_ids)
-        batch['affect_labels'] = torch.stack(affect_labels)
-        return batch
+TARGET_CTRL_CODE = '<|nontoxic|>'
+CTRL_CODES = ['<|nontoxic|>', '<|toxic|>']
+assert TARGET_CTRL_CODE in CTRL_CODES
 
 
 @dataclass
@@ -88,6 +77,10 @@ class ModelArguments:
         default=None,
         metadata={"help": "If training from scratch, pass a model type from the list: " + ", ".join(MODEL_TYPES)},
     )
+    controllable_model: Optional[str] = field(
+        default=None,
+        metadata={"help": "Use a controllable model for evaluation"},
+    )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
@@ -97,34 +90,28 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
-    affect_beta: int = field(
-        default=1, metadata={"help": "Beta to set the AffectLM model to before training and eval"}
-    )
-    freeze_transformer: bool = field(
-        default=True, metadata={"help": "Freeze the transformer parameters."}
-    )
-    freeze_lm_head: bool = field(
-        default=True, metadata={"help": "Freeze the GPT-2 LM head parameters."}
-    )
 
 
 @dataclass
 class DataTrainingArguments:
     """
-    Arguments pertaining to what data_processing we are going to input our model for training and eval.
+    Arguments pertaining to what data we are going to input our model for training and eval.
     """
 
-    train_data_files: Optional[str] = field(
-        default=None,
-        metadata={
-            "nargs": "+",
-        }
+    train_data_file: Optional[str] = field(
+        default=None, metadata={"help": "The input training data file (a text file)."}
     )
-    eval_data_files: Optional[str] = field(
+    eval_data_file: Optional[str] = field(
         default=None,
-        metadata={
-            "nargs": "+",
-        },
+        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+    )
+    line_by_line: bool = field(
+        default=False,
+        metadata={"help": "Whether distinct lines of text in the dataset are to be handled as distinct sequences."},
+    )
+    webtext: bool = field(
+        default=False,
+        metadata={"help": "Use webtext eval set"},
     )
 
     mlm: bool = field(
@@ -143,20 +130,25 @@ class DataTrainingArguments:
         },
     )
     overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and eval sets"}
+        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False, local_rank=-1):
-    file_paths = args.eval_data_files if evaluate else args.train_data_files
-    if len(file_paths) != NUM_AFFECTS:
-        raise ValueError('There must be 1 data_processing file for each affect class.')
-    datasets = []
-    for i, file_path in enumerate(file_paths):
-        d = AffectTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size,
-                              affect_class=i, local_rank=local_rank)
-        datasets.append(d)
-    return ConcatDataset(datasets)
+def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, inline_meta: str = None, local_rank=-1):
+    file_path = args.eval_data_file
+    if args.webtext:
+        return WebTextPretokenizedDataset(
+            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, inline_meta=inline_meta,
+            local_rank=local_rank
+        )
+    elif args.line_by_line:
+        return LineByLineTextDataset(
+            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank
+        )
+    else:
+        return TextDataset(
+            tokenizer=tokenizer, file_path=file_path, block_size=args.block_size, local_rank=local_rank,
+        )
 
 
 def main():
@@ -167,20 +159,14 @@ def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    if data_args.eval_data_files is None and training_args.do_eval:
+    if training_args.do_train:
         raise ValueError(
-            "Cannot do eval without an eval data_processing file. Either supply a file to --eval_data_file "
-            "or remove the --do_eval argument."
+            "Training not supported with this script."
         )
 
-    if (
-            os.path.exists(training_args.output_dir)
-            and os.listdir(training_args.output_dir)
-            and training_args.do_train
-            and not training_args.overwrite_output_dir
-    ):
+    if data_args.eval_data_file is None:
         raise ValueError(
-            f"Output directory ({training_args.output_dir}) already exists and is not empty. Use --overwrite_output_dir to overcome."
+            "Cannot do evaluation without an evaluation data file."
         )
 
     # Setup logging
@@ -197,7 +183,7 @@ def main():
         bool(training_args.local_rank != -1),
         training_args.fp16,
     )
-    logger.info("Training/eval parameters %s", training_args)
+    logger.info("Training/evaluation parameters %s", training_args)
 
     # Set seed
     set_seed(training_args.seed)
@@ -226,26 +212,43 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
+    inline_meta = None
+    if model_args.controllable_model == 'ctrl-gpt2':
+        print("Loaded added tokens:", tokenizer.added_tokens_encoder)
+        inline_meta = TARGET_CTRL_CODE
+        assert inline_meta in tokenizer.get_vocab().keys()
+        print("Using inline meta:", inline_meta)
+
     if model_args.model_name_or_path:
-        model = AffectGPT2LMHeadModel.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-        )
+        controllable_model = model_args.controllable_model
+        if controllable_model and controllable_model.startswith('affect-gpt2'):
+            logger.info("Using AffectLM for evaluation")
+            model = AffectGPT2LMHeadModel.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+            )
+
+            # Evaluate with non-toxic affect
+            beta = int(re.search(r'beta-([0-9]+)', controllable_model).group(1))
+            logging.info(f"Setting AffectLM beta to {beta}")
+            model.affect.beta = beta
+            affect_label = F.one_hot(torch.LongTensor([AFFECT_LABEL_IDX]),
+                                     num_classes=AFFECT_NUM_LABELS).float().to(training_args.device)
+            model.set_affect_labels(affect_label)
+        else:
+            model = AutoModelWithLMHead.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+            )
     else:
         logger.info("Training new model from scratch")
-        model = AffectGPT2LMHeadModel.from_config(config)
+        model = AutoModelWithLMHead.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
-
-    model.affect.beta = model_args.affect_beta  # Affect beta set before training/eval
-    if model_args.freeze_transformer:
-        print("Freezing transformer weights")
-        model.freeze_transformer()
-    if model_args.freeze_lm_head:
-        print("Freezing LM head weights")
-        model.freeze_lm_head()
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
@@ -260,17 +263,10 @@ def main():
         data_args.block_size = min(data_args.block_size, tokenizer.max_len)
 
     # Get datasets
-    train_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank)
-        if training_args.do_train
-        else None
+    eval_dataset = get_dataset(
+        data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, inline_meta=inline_meta
     )
-    eval_dataset = (
-        get_dataset(data_args, tokenizer=tokenizer, local_rank=training_args.local_rank, evaluate=True)
-        if training_args.do_eval
-        else None
-    )
-    data_collator = AffectDataCollator(
+    data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
 
@@ -279,28 +275,13 @@ def main():
         model=model,
         args=training_args,
         data_collator=data_collator,
-        train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         prediction_loss_only=True,
     )
 
-    # Training
-    if training_args.do_train:
-        model_path = (
-            model_args.model_name_or_path
-            if model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path)
-            else None
-        )
-        trainer.train(model_path=model_path)
-        trainer.save_model()
-        # For convenience, we also re-save the tokenizer to the same directory,
-        # so that you can share your model easily on huggingface.co/models =)
-        if trainer.is_world_master():
-            tokenizer.save_pretrained(training_args.output_dir)
-
     # Evaluation
     results = {}
-    if training_args.do_eval and training_args.local_rank in [-1, 0]:
+    if training_args.local_rank in [-1, 0]:
         logger.info("*** Evaluate ***")
 
         eval_output = trainer.evaluate()
