@@ -352,7 +352,7 @@ def generate_text_pplm(
             prediction = classifier(torch.mean(unpert_last_hidden, dim=1))
             label = torch.tensor([class_label], device=device, dtype=torch.long)
             unpert_discrim_loss = ce_loss(prediction, label)
-            # print("unperturbed discrim loss", unpert_discrim_loss.data_processing.cpu().numpy())
+            # print("unperturbed discrim loss", unpert_discrim_loss.data.cpu().numpy())
         else:
             unpert_discrim_loss = 0
 

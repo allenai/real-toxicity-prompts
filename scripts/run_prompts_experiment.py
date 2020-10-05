@@ -44,7 +44,7 @@ def collate(dataset: Optional[pd.DataFrame], generations: List[str], responses: 
 @click.command()
 @click.argument('output-dir')
 @click.option('--dataset-file', required=False, type=str,
-              help='JSONL file containing prompts data_processing. Each row must contain a prompt at `row["prompt"]["text"]`.')
+              help='JSONL file containing prompts data. Each row must contain a prompt at `row["prompt"]["text"]`.')
 @click.option('--use-eos/--use-dataset', default=False, help='Whether to use EOS or a dataset file for generation.')
 @click.option('--model', required=True, help='Equivalent to `model_name_or_path` in transformers.')
 @click.option('--model-type', required=True,

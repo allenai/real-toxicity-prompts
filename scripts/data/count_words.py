@@ -22,7 +22,7 @@ def main(output_dir, model="en_core_web_sm", n_jobs=8, batch_size=100_000):
         output_dir.mkdir()
 
     # load and pre-process the OWTC corpus
-    print("Loading OWTC data_processing...")
+    print("Loading OWTC data...")
     owtc = DATA_DIR / 'openwebtext.db'
 
     con = sqlite3.connect(owtc, check_same_thread=False)
