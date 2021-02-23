@@ -1,7 +1,7 @@
 # Real Toxicity Prompts
 [[Paper link]](https://arxiv.org/abs/2009.11462)
 [[Demo link]](https://toxicdegeneration.allenai.org/) 
-[[Data link]](https://open.quiltdata.com/b/ai2-datasets/tree/realtoxicityprompts/)
+[[Data link]](https://allenai.org/data/real-toxicity-prompts)
 
 Work in progress, please revisit this page soon for more in-depth instructions.
 
